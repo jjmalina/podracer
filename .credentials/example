@@ -1,0 +1,24 @@
+# Podracer Credentials
+# Copy this file's instructions to set up your credentials.
+# Each credential is a separate file in this directory.
+# These files are gitignored.
+
+# --- hf_token ---
+# HuggingFace token for speaker diarization (pyannote models)
+# Get one at: https://huggingface.co/settings/tokens
+# Save to: .credentials/hf_token
+# Contents: just the token string, e.g. hf_xxxxxxxxxxxxx
+
+# --- openrouter_token ---
+# OpenRouter API key for cloud summarization
+# Get one at: https://openrouter.ai/keys
+# Save to: .credentials/openrouter_token
+# Contents: just the key string, e.g. sk-or-xxxxxxxxxxxxx
+
+# --- podcast_index ---
+# Podcast Index API credentials for podcast search
+# Sign up at: https://api.podcastindex.org/signup
+# Save to: .credentials/podcast_index
+# Contents (two lines):
+# PODCAST_INDEX_API_KEY=your_key_here
+# PODCAST_INDEX_API_SECRET=your_secret_here

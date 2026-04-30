@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from podracer.models import Episode, FeedEpisode, Podcast, Transcript
+from podracer.models import Episode, FeedEpisode, Podcast, SummaryRecord, Transcript
 
 DEFAULT_DB_PATH = "./data/podracer.db"
 DEFAULT_MEDIA_DIR = "./data/media/"
@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS episodes (
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(podcast_id, guid)
+);
+
+CREATE TABLE IF NOT EXISTS summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    episode_id INTEGER NOT NULL UNIQUE REFERENCES episodes(id),
+    data TEXT NOT NULL,
+    model TEXT NOT NULL,
+    backend TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -191,6 +200,34 @@ def save_transcript(conn: sqlite3.Connection, episode_id: int, text: str,
 def get_transcript(conn: sqlite3.Connection, episode_id: int) -> Transcript | None:
     row = conn.execute("SELECT * FROM transcripts WHERE episode_id = ?", (episode_id,)).fetchone()
     return _transcript_from_row(row) if row else None
+
+
+def _summary_from_row(row: sqlite3.Row) -> SummaryRecord:
+    return SummaryRecord(**{k: row[k] for k in row.keys()})
+
+
+def save_summary(conn: sqlite3.Connection, episode_id: int, data: str,
+                 model: str, backend: str) -> int:
+    conn.execute(
+        """INSERT INTO summaries (episode_id, data, model, backend)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(episode_id) DO UPDATE SET
+             data=excluded.data, model=excluded.model,
+             backend=excluded.backend, created_at=datetime('now')""",
+        (episode_id, data, model, backend),
+    )
+    conn.execute(
+        "UPDATE episodes SET status = 'summarized' WHERE id = ?",
+        (episode_id,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT id FROM summaries WHERE episode_id = ?", (episode_id,)).fetchone()
+    return row["id"]
+
+
+def get_summary(conn: sqlite3.Connection, episode_id: int) -> SummaryRecord | None:
+    row = conn.execute("SELECT * FROM summaries WHERE episode_id = ?", (episode_id,)).fetchone()
+    return _summary_from_row(row) if row else None
 
 
 def update_podcast_synced(conn: sqlite3.Connection, podcast_id: int) -> None:

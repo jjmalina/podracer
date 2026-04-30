@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 
+from podracer import logger
 from podracer.summarize import Backend, PodcastSummary, summarize
 
 
@@ -41,6 +42,10 @@ def print_summary(result: PodcastSummary) -> None:
 
 
 def main():
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+
     parser = argparse.ArgumentParser(description="Summarize a podcast transcript")
     parser.add_argument("transcript_file", help="Path to a transcript text file")
     parser.add_argument("--model", default="gemma4:e4b", help="Model name (default: gemma4:e4b)")
@@ -54,13 +59,13 @@ def main():
 
     path = Path(args.transcript_file)
     if not path.exists():
-        print(f"Error: File not found: {path}", file=sys.stderr)
+        logger.error("File not found: %s", path)
         sys.exit(1)
 
     if args.backend == "openrouter":
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
-            print("Error: OPENROUTER_API_KEY environment variable is required", file=sys.stderr)
+            logger.error("OPENROUTER_API_KEY environment variable is required")
             sys.exit(1)
         backend = Backend.openrouter(args.model, api_key)
     elif args.backend == "vllm":

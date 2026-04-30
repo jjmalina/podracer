@@ -8,6 +8,8 @@ from pathlib import Path
 # Lightning explicitly passes weights_only=True, so we force it to False
 import torch
 
+from podracer import logger
+
 _original_torch_load = torch.load
 def _patched_torch_load(*args, **kwargs):
     kwargs["weights_only"] = False
@@ -43,7 +45,7 @@ def transcribe(
     audio = whisperx.load_audio(audio_path)
     result = model.transcribe(audio)
 
-    print(f"Detected language: {result['language']}")
+    logger.info("Detected language: %s", result["language"])
 
     # Align whisper output for better timestamps
     align_model, metadata = whisperx.load_align_model(
@@ -55,7 +57,7 @@ def transcribe(
 
     # Diarization (if HF token provided)
     if hf_token:
-        print("Running speaker diarization...")
+        logger.info("Running speaker diarization...")
         diarize_model = DiarizationPipeline(token=hf_token, device=device)
         diarize_segments = diarize_model(audio_path)
         result = whisperx.assign_word_speakers(diarize_segments, result)
@@ -67,7 +69,7 @@ def transcribe(
         start = segment["start"]
         end = segment["end"]
         text = segment["text"]
-        print(f"[{start:.2f}s -> {end:.2f}s] [{speaker}] {text}")
+        logger.debug("[%.2fs -> %.2fs] [%s] %s", start, end, speaker, text)
         minutes, secs = divmod(int(start), 60)
         hours, minutes = divmod(minutes, 60)
         ts = f"{hours:02d}:{minutes:02d}:{secs:02d}"
@@ -89,20 +91,20 @@ def main():
     args = parser.parse_args()
 
     if not Path(args.audio_file).exists():
-        print(f"Error: File not found: {args.audio_file}", file=sys.stderr)
+        logger.error("File not found: %s", args.audio_file)
         sys.exit(1)
 
     hf_token = None if args.no_diarize else (args.hf_token or load_hf_token())
     if not hf_token:
-        print("Note: No HF_TOKEN provided, skipping speaker diarization")
+        logger.info("No HF_TOKEN provided, skipping speaker diarization")
 
     text = transcribe(args.audio_file, args.model, args.device, args.compute_type, hf_token)
 
     if args.output:
         Path(args.output).write_text(text)
-        print(f"\nTranscription saved to: {args.output}")
+        logger.info("Transcription saved to: %s", args.output)
     else:
-        print(f"\n--- Full Transcription ---\n{text}")
+        print(text)
 
 
 if __name__ == "__main__":

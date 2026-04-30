@@ -1,0 +1,22 @@
+[general]
+db_path = "./data/podracer.db"
+media_dir = "./data/media/"
+
+[transcribe]
+model = "small"
+device = "cuda"
+compute_type = "float16"
+diarize = true
+
+[summarize]
+backend = "ollama"
+model = "gemma4:e4b"
+# base_url = "http://localhost:11434"
+
+# API keys can go here or in .credentials/ files or env vars.
+# Priority: env vars > config.toml > .credentials/ files
+# [keys]
+# hf_token = "hf_..."
+# openrouter_api_key = "sk-or-..."
+# podcast_index_key = "..."
+# podcast_index_secret = "..."

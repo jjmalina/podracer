@@ -1,17 +1,19 @@
 import argparse
 import json
-import os
 import sys
 
+from podracer import logger
+from podracer.config import Config, load_config
 from podracer.db import (
-    get_config,
     get_connection,
     get_episode,
     get_episodes,
     get_podcast,
     get_subscribed_podcasts,
+    get_summary,
     get_transcript,
     init_db,
+    save_summary,
     save_transcript,
     subscribe,
     unsubscribe,
@@ -24,10 +26,18 @@ from podracer.download import download_episode
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.search import search_podcasts
 
+_cfg: Config | None = None
+
+
+def _config() -> Config:
+    global _cfg
+    if _cfg is None:
+        _cfg = load_config()
+    return _cfg
+
 
 def _db():
-    db_path = os.environ.get("PODRACER_DB")
-    conn = get_connection(db_path)
+    conn = get_connection(_config().db_path)
     init_db(conn)
     return conn
 
@@ -53,7 +63,7 @@ def _sync_episodes(conn, podcast_id: int, feed_url: str, limit: int | None = Non
 def cmd_search(args):
     results = search_podcasts(args.query)
     if not results:
-        print("No results found.", file=sys.stderr)
+        logger.info("No results found.")
         return
 
     if args.json:
@@ -71,7 +81,7 @@ def cmd_subscribe(args):
     conn = _db()
     feed_url = args.feed_url
 
-    print(f"Fetching feed: {feed_url}", file=sys.stderr)
+    logger.info("Fetching feed: %s", feed_url)
     meta = fetch_feed_metadata(feed_url)
     podcast_id = upsert_podcast(conn, meta.title, meta.author, feed_url,
                                 meta.artwork_url, meta.description)
@@ -89,7 +99,7 @@ def cmd_unsubscribe(args):
     conn = _db()
     podcast = get_podcast(conn, args.podcast_id)
     if not podcast:
-        print(f"Podcast {args.podcast_id} not found.", file=sys.stderr)
+        logger.error("Podcast %s not found.", args.podcast_id)
         sys.exit(1)
     unsubscribe(conn, args.podcast_id)
     print(f"Unsubscribed from: {podcast.title}")
@@ -118,11 +128,11 @@ def cmd_episodes(args):
     conn = _db()
     podcast = get_podcast(conn, args.podcast_id)
     if not podcast:
-        print(f"Podcast {args.podcast_id} not found.", file=sys.stderr)
+        logger.error("Podcast %s not found.", args.podcast_id)
         sys.exit(1)
 
     if args.sync:
-        print(f"Syncing: {podcast.title}", file=sys.stderr)
+        logger.info("Syncing: %s", podcast.title)
         _sync_episodes(conn, args.podcast_id, podcast.feed_url)
 
     db_episodes = get_episodes(conn, args.podcast_id, args.limit)
@@ -145,15 +155,15 @@ def _download_one(conn, episode, podcast=None, json_output=False):
     if not podcast:
         podcast = get_podcast(conn, episode.podcast_id)
     if not podcast:
-        print(f"Podcast not found for episode {episode.id}.", file=sys.stderr)
+        logger.error("Podcast not found for episode %s.", episode.id)
         return
-    media_dir = get_config(conn, "media_dir") or "./data/media/"
+    media_dir = _config().media_dir
 
     if episode.local_path and episode.status != "pending":
         print(f"Already downloaded: {media_dir}{episode.local_path}")
         return
 
-    print(f"Downloading: {episode.title}", file=sys.stderr)
+    logger.info("Downloading: %s", episode.title)
     relative_path, size = download_episode(
         episode.audio_url, media_dir, podcast.title, episode.title,
     )
@@ -171,23 +181,23 @@ def cmd_download(args):
     if args.podcast_id and args.latest:
         podcast = get_podcast(conn, args.podcast_id)
         if not podcast:
-            print(f"Podcast {args.podcast_id} not found.", file=sys.stderr)
+            logger.error("Podcast %s not found.", args.podcast_id)
             sys.exit(1)
         episodes = get_episodes(conn, args.podcast_id, args.latest)
         if not episodes:
-            print("No episodes found.", file=sys.stderr)
+            logger.error("No episodes found.")
             sys.exit(1)
         for ep in episodes:
             _download_one(conn, ep, podcast, args.json)
         return
 
     if not args.episode_id:
-        print("Provide an episode_id, or use --podcast and --latest.", file=sys.stderr)
+        logger.error("Provide an episode_id, or use --podcast and --latest.")
         sys.exit(1)
 
     episode = get_episode(conn, args.episode_id)
     if not episode:
-        print(f"Episode {args.episode_id} not found.", file=sys.stderr)
+        logger.error("Episode %s not found.", args.episode_id)
         sys.exit(1)
     _download_one(conn, episode, json_output=args.json)
 
@@ -198,7 +208,7 @@ def cmd_sync(args):
     if args.podcast_id:
         podcast = get_podcast(conn, args.podcast_id)
         if not podcast:
-            print(f"Podcast {args.podcast_id} not found.", file=sys.stderr)
+            logger.error("Podcast %s not found.", args.podcast_id)
             sys.exit(1)
         podcasts = [podcast]
     else:
@@ -209,9 +219,9 @@ def cmd_sync(args):
         return
 
     for podcast in podcasts:
-        print(f"Syncing: {podcast.title}", file=sys.stderr)
+        logger.info("Syncing: %s", podcast.title)
         count = _sync_episodes(conn, podcast.id, podcast.feed_url, limit=args.limit)
-        print(f"  {count} episodes", file=sys.stderr)
+        logger.info("  %d episodes", count)
 
     print(f"Synced {len(podcasts)} podcast(s).")
 
@@ -220,7 +230,7 @@ def cmd_transcribe(args):
     conn = _db()
     episode = get_episode(conn, args.episode_id)
     if not episode:
-        print(f"Episode {args.episode_id} not found.", file=sys.stderr)
+        logger.error("Episode %s not found.", args.episode_id)
         sys.exit(1)
 
     existing = get_transcript(conn, args.episode_id)
@@ -231,13 +241,13 @@ def cmd_transcribe(args):
             print(existing.text)
         return
 
-    media_dir = get_config(conn, "media_dir") or "./data/media/"
+    media_dir = _config().media_dir
     if not episode.local_path or episode.status == "pending":
         podcast = get_podcast(conn, episode.podcast_id)
         if not podcast:
-            print(f"Podcast not found for episode {episode.id}.", file=sys.stderr)
+            logger.error("Podcast not found for episode %s.", episode.id)
             sys.exit(1)
-        print(f"Downloading first: {episode.title}", file=sys.stderr)
+        logger.info("Downloading first: %s", episode.title)
         relative_path, size = download_episode(
             episode.audio_url, media_dir, podcast.title, episode.title,
         )
@@ -247,23 +257,28 @@ def cmd_transcribe(args):
         audio_path = f"{media_dir}{episode.local_path}"
 
     try:
-        from podracer.transcribe import load_hf_token, transcribe
+        from podracer.transcribe import transcribe
     except (ImportError, AttributeError) as e:
-        print(f"Error: transcription dependencies not available: {e}", file=sys.stderr)
-        print("This may be due to a torch/torchaudio version conflict with vLLM.", file=sys.stderr)
+        logger.error("Transcription dependencies not available: %s", e)
+        logger.error("This may be due to a torch/torchaudio version conflict with vLLM.")
         sys.exit(1)
 
-    hf_token = None if args.no_diarize else load_hf_token()
-    print(f"Transcribing: {episode.title}", file=sys.stderr)
+    cfg = _config()
+    hf_token = None if args.no_diarize else cfg.hf_token
+    model = args.model or cfg.transcribe_model
+    device = args.device or cfg.transcribe_device
+    compute_type = args.compute_type or cfg.transcribe_compute_type
+
+    logger.info("Transcribing: %s", episode.title)
     text = transcribe(
         audio_path,
-        model_size=args.model,
-        device=args.device,
-        compute_type=args.compute_type,
+        model_size=model,
+        device=device,
+        compute_type=compute_type,
         hf_token=hf_token,
     )
 
-    save_transcript(conn, episode.id, text, args.model)
+    save_transcript(conn, episode.id, text, model)
 
     if args.json:
         saved = get_transcript(conn, episode.id)
@@ -273,9 +288,75 @@ def cmd_transcribe(args):
         print(text)
 
 
+def cmd_summarize(args):
+    conn = _db()
+    episode = get_episode(conn, args.episode_id)
+    if not episode:
+        logger.error("Episode %s not found.", args.episode_id)
+        sys.exit(1)
+
+    existing = get_summary(conn, args.episode_id)
+    if existing and not args.force:
+        if args.json:
+            print(existing.data)
+        else:
+            from podracer.summarize import PodcastSummary
+            from podracer.summarize_cli import print_summary
+
+            result = PodcastSummary.model_validate_json(existing.data)
+            print_summary(result)
+        return
+
+    transcript = get_transcript(conn, args.episode_id)
+    if not transcript:
+        logger.error("No transcript for episode %s. Run `podracer transcribe %s` first.",
+                      args.episode_id, args.episode_id)
+        sys.exit(1)
+
+    from podracer.summarize import Backend, summarize
+
+    cfg = _config()
+    backend_name = args.backend or cfg.summarize_backend
+    model = args.model or cfg.summarize_model
+    base_url = args.base_url or cfg.summarize_base_url
+
+    if backend_name == "openrouter":
+        api_key = cfg.openrouter_api_key
+        if not api_key:
+            logger.error("OpenRouter API key not configured. Set in config.toml, .credentials/, or env var.")
+            sys.exit(1)
+        backend = Backend.openrouter(model, api_key)
+    elif backend_name == "vllm":
+        backend = Backend.vllm(model, base_url or "http://localhost:8000")
+    else:
+        backend = Backend.ollama(model, base_url or "http://localhost:11434")
+
+    logger.info("Summarizing: %s", episode.title)
+    result = summarize(transcript.text, backend=backend)
+
+    save_summary(conn, episode.id, result.model_dump_json(), model, backend_name)
+
+    if args.json:
+        print(result.model_dump_json(indent=2))
+    else:
+        from podracer.summarize_cli import print_summary
+
+        print_summary(result)
+
+
 def main():
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     parser = argparse.ArgumentParser(prog="podracer", description="Podcast knowledge platform")
     parser.add_argument("--json", action="store_true", help="Output JSON")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     p_search = subparsers.add_parser("search", help="Search for podcasts")
@@ -308,12 +389,21 @@ def main():
 
     p_transcribe = subparsers.add_parser("transcribe", help="Transcribe an episode")
     p_transcribe.add_argument("episode_id", type=int, help="Episode ID")
-    p_transcribe.add_argument("--model", default="small", help="Whisper model size (default: small)")
-    p_transcribe.add_argument("--device", default="cuda", choices=["cuda", "cpu"], help="Device (default: cuda)")
-    p_transcribe.add_argument("--compute-type", default="float16", help="Compute type (default: float16)")
+    p_transcribe.add_argument("--model", default=None, help="Whisper model size (default: from config)")
+    p_transcribe.add_argument("--device", default=None, help="Device: cuda or cpu (default: from config)")
+    p_transcribe.add_argument("--compute-type", default=None, help="Compute type (default: from config)")
     p_transcribe.add_argument("--no-diarize", action="store_true", help="Skip speaker diarization")
     p_transcribe.add_argument("--force", action="store_true", help="Re-transcribe even if transcript exists")
     p_transcribe.set_defaults(func=cmd_transcribe)
+
+    p_summarize = subparsers.add_parser("summarize", help="Summarize an episode")
+    p_summarize.add_argument("episode_id", type=int, help="Episode ID")
+    p_summarize.add_argument("--model", default=None, help="Model name (default: from config)")
+    p_summarize.add_argument("--backend", choices=["ollama", "vllm", "openrouter"], default=None,
+                             help="Inference backend (default: from config)")
+    p_summarize.add_argument("--base-url", default=None, help="Backend API base URL")
+    p_summarize.add_argument("--force", action="store_true", help="Re-summarize even if summary exists")
+    p_summarize.set_defaults(func=cmd_summarize)
 
     p_sync = subparsers.add_parser("sync", help="Sync podcast feeds")
     p_sync.add_argument("podcast_id", type=int, nargs="?", help="Podcast ID (omit to sync all subscriptions)")
@@ -321,6 +411,8 @@ def main():
     p_sync.set_defaults(func=cmd_sync)
 
     args = parser.parse_args()
+    if args.verbose:
+        logging.getLogger("podracer").setLevel(logging.DEBUG)
     args.func(args)
 
 

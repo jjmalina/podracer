@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import httpx
 from pydantic import BaseModel
 
+from podracer import logger
+
 DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 65536
 DEFAULT_MAX_TOKENS = 16384
@@ -222,14 +224,12 @@ def _chat_vllm(backend: Backend, system: str, user: str, schema: dict) -> str:
         timeout=DEFAULT_TIMEOUT,
     )
     if not resp.is_success:
-        import sys
-        print(resp.text, file=sys.stderr)
+        logger.error("vLLM request failed: %s", resp.text)
     resp.raise_for_status()
     data = resp.json()
     content = _extract_json(data["choices"][0]["message"]["content"])
     if data["choices"][0]["finish_reason"] == "length":
-        import sys
-        print("  warning: response truncated, attempting repair", file=sys.stderr)
+        logger.warning("Response truncated, attempting repair")
         content = _repair_truncated_json(content)
     return content
 
@@ -256,14 +256,12 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict) -> 
         timeout=DEFAULT_TIMEOUT,
     )
     if not resp.is_success:
-        import sys
-        print(resp.text, file=sys.stderr)
+        logger.error("OpenRouter request failed: %s", resp.text)
     resp.raise_for_status()
     data = resp.json()
     content = _extract_json(data["choices"][0]["message"]["content"])
     if data["choices"][0].get("finish_reason") == "length":
-        import sys
-        print("  warning: response truncated, attempting repair", file=sys.stderr)
+        logger.warning("Response truncated, attempting repair")
         content = _repair_truncated_json(content)
     return content
 
@@ -303,13 +301,12 @@ def rewrite_transcript(transcript: str, speakers: list[SpeakerIdentification]) -
 
 
 def _step(label: str, func, *args):
-    import sys
     import time
-    print(f"[{label}] starting...", file=sys.stderr, flush=True)
+    logger.info("[%s] starting...", label)
     start = time.time()
     result = func(*args)
     elapsed = time.time() - start
-    print(f"[{label}] done ({elapsed:.1f}s)", file=sys.stderr, flush=True)
+    logger.info("[%s] done (%.1fs)", label, elapsed)
     return result
 
 

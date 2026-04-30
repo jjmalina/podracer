@@ -1,9 +1,13 @@
 import hashlib
-import os
 import time
 
 import httpx
 from pydantic import BaseModel
+
+from podracer.config import load_config
+
+PODCAST_INDEX_BASE = "https://api.podcastindex.org/api/1.0"
+TIMEOUT = 30.0
 
 
 class PodcastSearchResult(BaseModel):
@@ -15,35 +19,17 @@ class PodcastSearchResult(BaseModel):
     description: str
 
 
-PODCAST_INDEX_BASE = "https://api.podcastindex.org/api/1.0"
-TIMEOUT = 30.0
-
-
-def _get_credentials() -> tuple[str, str]:
-    key = os.environ.get("PODCAST_INDEX_KEY", "")
-    secret = os.environ.get("PODCAST_INDEX_SECRET", "")
-    if key and secret:
-        return key, secret
-    from pathlib import Path
-    for base in [Path.cwd(), Path(__file__).resolve().parent.parent]:
-        cred_path = base / ".credentials" / "podcast_index"
-        if cred_path.exists():
-            lines = cred_path.read_text().strip().splitlines()
-            values = [line.split("=", 1)[-1].strip() if "=" in line else line.strip() for line in lines]
-            if len(values) >= 2:
-                return values[0], values[1]
-    raise RuntimeError(
-        "Podcast Index credentials not found. Either set PODCAST_INDEX_KEY and "
-        "PODCAST_INDEX_SECRET env vars, or create .credentials/podcast_index with "
-        "key on line 1 and secret on line 2."
-    )
-
-
 def _auth_headers() -> dict[str, str]:
-    key, secret = _get_credentials()
+    cfg = load_config()
+    key = cfg.podcast_index_key
+    secret = cfg.podcast_index_secret
+    if not key or not secret:
+        raise RuntimeError(
+            "Podcast Index credentials not found. Set podcast_index_key and podcast_index_secret "
+            "in config.toml, .credentials/podcast_index, or env vars."
+        )
     epoch = str(int(time.time()))
-    hash_input = key + secret + epoch
-    auth_hash = hashlib.sha1(hash_input.encode()).hexdigest()
+    auth_hash = hashlib.sha1((key + secret + epoch).encode()).hexdigest()
     return {
         "X-Auth-Key": key,
         "X-Auth-Date": epoch,
@@ -71,26 +57,3 @@ def search_podcasts(query: str) -> list[PodcastSearchResult]:
         )
         for f in resp.json().get("feeds", [])
     ]
-
-
-def get_podcast_by_feed_id(feed_id: int) -> dict | None:
-    resp = httpx.get(
-        f"{PODCAST_INDEX_BASE}/podcasts/byfeedid",
-        params={"id": feed_id},
-        headers=_auth_headers(),
-        timeout=TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("feed")
-
-
-def get_episodes_by_feed_id(feed_id: int, max_results: int = 20) -> list[dict]:
-    resp = httpx.get(
-        f"{PODCAST_INDEX_BASE}/episodes/byfeedid",
-        params={"id": feed_id, "max": max_results},
-        headers=_auth_headers(),
-        timeout=TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json().get("items", [])

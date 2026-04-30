@@ -37,6 +37,15 @@ class Transcript(BaseModel):
     created_at: str | None = None
 
 
+class SummaryRecord(BaseModel):
+    id: int
+    episode_id: int
+    data: str
+    model: str
+    backend: str
+    created_at: str | None = None
+
+
 class FeedMetadata(BaseModel):
     title: str
     author: str | None = None
