@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import httpx
 from pydantic import BaseModel
 
-
 DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 65536
 DEFAULT_MAX_TOKENS = 16384

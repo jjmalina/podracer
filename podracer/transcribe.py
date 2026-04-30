@@ -7,11 +7,12 @@ from pathlib import Path
 # pyannote models use omegaconf which isn't in the safe globals list
 # Lightning explicitly passes weights_only=True, so we force it to False
 import torch
+
 _original_torch_load = torch.load
 def _patched_torch_load(*args, **kwargs):
     kwargs["weights_only"] = False
     return _original_torch_load(*args, **kwargs)
-torch.load = _patched_torch_load
+torch.load = _patched_torch_load  # type: ignore[assignment]
 
 import whisperx
 from whisperx.diarize import DiarizationPipeline
@@ -55,7 +56,7 @@ def transcribe(
     # Diarization (if HF token provided)
     if hf_token:
         print("Running speaker diarization...")
-        diarize_model = DiarizationPipeline(use_auth_token=hf_token, device=device)
+        diarize_model = DiarizationPipeline(token=hf_token, device=device)
         diarize_segments = diarize_model(audio_path)
         result = whisperx.assign_word_speakers(diarize_segments, result)
 

@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -45,7 +44,9 @@ def main():
     parser = argparse.ArgumentParser(description="Summarize a podcast transcript")
     parser.add_argument("transcript_file", help="Path to a transcript text file")
     parser.add_argument("--model", default="gemma4:e4b", help="Model name (default: gemma4:e4b)")
-    parser.add_argument("--backend", choices=["ollama", "vllm", "openrouter"], default="ollama", help="Inference backend (default: ollama)")
+    parser.add_argument(
+        "--backend", choices=["ollama", "vllm", "openrouter"], default="ollama", help="Inference backend",
+    )
     parser.add_argument("--base-url", default=None, help="Backend API base URL (default: auto per backend)")
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of formatted text")
 

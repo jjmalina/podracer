@@ -1,17 +1,36 @@
 [project]
 name = "podracer"
 version = "0.1.0"
-description = "Audio transcription with diarization using whisperX"
+description = "Local-first podcast knowledge platform"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "whisperx>=3.1.0",
     "pydantic>=2.0",
     "httpx>=0.27",
+    "feedparser>=6.0",
 ]
 
 [project.scripts]
+podracer = "podracer.cli:main"
 transcribe = "podracer.transcribe:main"
 summarize = "podracer.summarize_cli:main"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+per-file-ignores = {"podracer/transcribe.py" = ["E402"]}
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[[tool.ty.overrides]]
+include = ["podracer/transcribe.py"]
+
+[tool.ty.overrides.rules]
+invalid-assignment = "ignore"
 
 [build-system]
 requires = ["hatchling"]
