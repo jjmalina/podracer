@@ -126,16 +126,31 @@ def cmd_list(args):
 
 def cmd_episodes(args):
     conn = _db()
-    podcast = get_podcast(conn, args.podcast_id)
-    if not podcast:
-        logger.error("Podcast %s not found.", args.podcast_id)
+
+    if args.feed:
+        meta = fetch_feed_metadata(args.feed)
+        podcast_id = upsert_podcast(conn, meta.title, meta.author, args.feed,
+                                    meta.artwork_url, meta.description)
+        conn.commit()
+        _sync_episodes(conn, podcast_id, args.feed, limit=args.limit)
+        podcast = get_podcast(conn, podcast_id)
+    elif args.podcast_id:
+        podcast = get_podcast(conn, args.podcast_id)
+        if not podcast:
+            logger.error("Podcast %s not found.", args.podcast_id)
+            sys.exit(1)
+        if args.sync:
+            logger.info("Syncing: %s", podcast.title)
+            _sync_episodes(conn, args.podcast_id, podcast.feed_url)
+    else:
+        logger.error("Provide a podcast_id or --feed <url>.")
         sys.exit(1)
 
-    if args.sync:
-        logger.info("Syncing: %s", podcast.title)
-        _sync_episodes(conn, args.podcast_id, podcast.feed_url)
+    db_episodes = get_episodes(conn, podcast.id, args.limit)
 
-    db_episodes = get_episodes(conn, args.podcast_id, args.limit)
+    if args.search:
+        term = args.search.lower()
+        db_episodes = [ep for ep in db_episodes if term in ep.title.lower()]
 
     if args.json:
         print(json.dumps([e.model_dump() for e in db_episodes], indent=2))
@@ -344,6 +359,96 @@ def cmd_summarize(args):
         print_summary(result)
 
 
+def cmd_process(args):
+    conn = _db()
+    episode = get_episode(conn, args.episode_id)
+    if not episode:
+        logger.error("Episode %s not found.", args.episode_id)
+        sys.exit(1)
+
+    podcast = get_podcast(conn, episode.podcast_id)
+    if not podcast:
+        logger.error("Podcast not found for episode %s.", episode.id)
+        sys.exit(1)
+
+    # Download
+    media_dir = _config().media_dir
+    if not episode.local_path or episode.status == "pending":
+        logger.info("Downloading: %s", episode.title)
+        relative_path, size = download_episode(
+            episode.audio_url, media_dir, podcast.title, episode.title,
+        )
+        update_episode_download(conn, episode.id, relative_path, size)
+        audio_path = f"{media_dir}{relative_path}"
+    else:
+        audio_path = f"{media_dir}{episode.local_path}"
+        logger.info("Already downloaded: %s", audio_path)
+
+    # Transcribe
+    existing_transcript = get_transcript(conn, args.episode_id)
+    if existing_transcript and not args.force:
+        logger.info("Transcript exists, skipping. Use --force to redo.")
+        transcript_text = existing_transcript.text
+    else:
+        try:
+            from podracer.transcribe import transcribe
+        except (ImportError, AttributeError) as e:
+            logger.error("Transcription dependencies not available: %s", e)
+            sys.exit(1)
+
+        cfg = _config()
+        hf_token = cfg.hf_token
+        model = cfg.transcribe_model
+        device = cfg.transcribe_device
+        compute_type = cfg.transcribe_compute_type
+
+        logger.info("Transcribing: %s", episode.title)
+        transcript_text = transcribe(
+            audio_path,
+            model_size=model,
+            device=device,
+            compute_type=compute_type,
+            hf_token=hf_token,
+        )
+        save_transcript(conn, episode.id, transcript_text, model)
+
+    # Summarize
+    existing_summary = get_summary(conn, args.episode_id)
+    if existing_summary and not args.force:
+        logger.info("Summary exists, skipping. Use --force to redo.")
+        from podracer.summarize import PodcastSummary
+        result = PodcastSummary.model_validate_json(existing_summary.data)
+    else:
+        from podracer.summarize import Backend, summarize
+
+        cfg = _config()
+        backend_name = args.backend or cfg.summarize_backend
+        model_name = args.model or cfg.summarize_model
+        base_url = args.base_url or cfg.summarize_base_url
+
+        if backend_name == "openrouter":
+            import os
+            api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.openrouter_api_key
+            if not api_key:
+                logger.error("OPENROUTER_API_KEY not set.")
+                sys.exit(1)
+            backend = Backend.openrouter(model_name, api_key)
+        elif backend_name == "vllm":
+            backend = Backend.vllm(model_name, base_url or "http://localhost:8000")
+        else:
+            backend = Backend.ollama(model_name, base_url or "http://localhost:11434")
+
+        logger.info("Summarizing: %s", episode.title)
+        result = summarize(transcript_text, backend=backend)
+        save_summary(conn, episode.id, result.model_dump_json(), model_name, backend_name)
+
+    if args.json:
+        print(result.model_dump_json(indent=2))
+    else:
+        from podracer.summarize_cli import print_summary
+        print_summary(result)
+
+
 def main():
     import logging
 
@@ -376,7 +481,9 @@ def main():
     p_list.set_defaults(func=cmd_list)
 
     p_episodes = subparsers.add_parser("episodes", help="List episodes for a podcast")
-    p_episodes.add_argument("podcast_id", type=int, help="Podcast ID")
+    p_episodes.add_argument("podcast_id", type=int, nargs="?", help="Podcast ID")
+    p_episodes.add_argument("--feed", help="RSS feed URL (imports podcast without subscribing)")
+    p_episodes.add_argument("--search", help="Filter episodes by title substring")
     p_episodes.add_argument("--limit", type=int, default=20, help="Max episodes to show")
     p_episodes.add_argument("--sync", action="store_true", help="Sync feed before listing")
     p_episodes.set_defaults(func=cmd_episodes)
@@ -404,6 +511,15 @@ def main():
     p_summarize.add_argument("--base-url", default=None, help="Backend API base URL")
     p_summarize.add_argument("--force", action="store_true", help="Re-summarize even if summary exists")
     p_summarize.set_defaults(func=cmd_summarize)
+
+    p_process = subparsers.add_parser("process", help="Process an episode: download, transcribe, summarize")
+    p_process.add_argument("episode_id", type=int, help="Episode ID")
+    p_process.add_argument("--model", default=None, help="Summarization model name")
+    p_process.add_argument("--backend", choices=["ollama", "vllm", "openrouter"], default=None,
+                           help="Inference backend")
+    p_process.add_argument("--base-url", default=None, help="Backend API base URL")
+    p_process.add_argument("--force", action="store_true", help="Redo transcription and summarization")
+    p_process.set_defaults(func=cmd_process)
 
     p_sync = subparsers.add_parser("sync", help="Sync podcast feeds")
     p_sync.add_argument("podcast_id", type=int, nargs="?", help="Podcast ID (omit to sync all subscriptions)")

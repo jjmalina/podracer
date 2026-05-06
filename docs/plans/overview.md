@@ -49,13 +49,17 @@ Same library, same code, just decomposed for scale.
 | **Transcription CLI** | Done | WhisperX + pyannote diarization. ~8 min for 2-hour podcast on RTX 5090. |
 | **Summarization CLI** | Done | Multi-pass pipeline (speakers → summary → chapters → insights → takes). Three backends: Ollama, vLLM, OpenRouter. |
 | **Model evaluation** | Research done | Tested 6 model/backend combos. Best: Qwen 3.6 35B MoE (quality) or Gemma 4 E4B bf16 (speed). See [eval results](2026-04-24-summarization-eval-results.md). |
+| **Podcast search & download** | Done | Search Podcast Index, subscribe, sync feeds, download audio. SQLite-backed. |
 | **Backend abstraction** | Done | `Backend` dataclass with Ollama/vLLM/OpenRouter support. Unified thinking-model handling. |
+| **Unified config & logging** | Done | Centralized config module, structured logging. |
 
 ### What's planned but not started
 
 | Component | Plan doc | Priority |
 |-----------|----------|----------|
 | **Podcast search & download** | [podcast-search-download.md](podcast-search-download.md) | Next — needed to build the pipeline |
+| **DeepSeek V4 eval** | This doc (Phase 1d) | High — same price as Qwen 3.6 on OpenRouter, potentially much better |
+| **Single episode processing** | This doc (Phase 1e) | High — process without subscribing |
 | **Summarization eval** | [summarization-cli-eval.md](summarization-cli-eval.md) | High — need multi-transcript eval to confirm model rankings |
 | **Transcription eval** | [transcription-eval.md](transcription-eval.md) | Medium — transcription works, eval is for regression testing |
 | **Pipeline orchestration** | This doc (Phase 2) | After Phase 1 components are solid |
@@ -68,13 +72,15 @@ Each component is independently useful and testable.
 
 | Step | Component | Plan Doc | Status |
 |------|-----------|----------|--------|
-| 1a | Podcast search & download | [podcast-search-download.md](podcast-search-download.md) | Not started |
+| 1a | Podcast search & download | [podcast-search-download.md](podcast-search-download.md) | Done |
 | 1b | Transcription polish + eval | [transcription-eval.md](transcription-eval.md) | CLI done, eval not started |
 | 1c | Summarization eval | [summarization-cli-eval.md](summarization-cli-eval.md) | CLI done, eval not started |
+| 1d | DeepSeek V4 eval | This doc | Done — V4 Flash is the cloud winner |
+| 1e | Single episode processing | This doc | Done |
 
-**Suggested order:** 1a → 1c → 1b
+**Suggested order:** 1e → 1d → 1c → 1b
 
-1a is the bottleneck — without podcast discovery and download, there's no pipeline. 1c (summarization eval) is high value because we need multi-transcript testing to confirm model choices. 1b (transcription eval) is lower priority since transcription already works well.
+1e (single episode processing) enables quick testing without subscription overhead. 1d (DeepSeek V4 eval) should happen before or alongside 1c since it may change the recommended production model. 1b (transcription eval) remains lowest priority.
 
 #### Phase 1a: Podcast Search & Download
 
@@ -113,6 +119,41 @@ The summarization CLI works across three backends with structured output. What's
 This is high priority — we need to confirm that E4B bf16 quality holds across diverse episodes before committing to it as the production model.
 
 Full spec: [summarization-cli-eval.md](summarization-cli-eval.md)
+
+#### Phase 1d: DeepSeek V4 Eval
+
+Test DeepSeek V4 via OpenRouter against Qwen 3.6 35B MoE. Same price tier, but DeepSeek V4 is a newer and larger model that should produce better summaries.
+
+Key questions:
+- Quality vs Qwen 3.6 on the summarization pipeline (speakers, chapters, insights, takes)
+- Latency on OpenRouter (DeepSeek V4 is large — may be slower)
+- Structured output compliance (does it follow JSON schema reliably?)
+- Whether it supports thinking suppression or needs different handling
+
+**Result:** DeepSeek V4 Flash wins. Excellent summary quality (~160s/ep), $0.14/M input tokens. Replaces Qwen 3.6 via OpenRouter as the recommended cloud backend. vLLM v0.20.0 also added initial local DeepSeek V4 support, so it could eventually run locally too (likely needs multi-GPU).
+
+#### Phase 1e: Single Episode Processing
+
+Process a single episode without subscribing to the podcast. Useful for one-off testing and avoiding unnecessary token spend.
+
+**Workflow:**
+```bash
+# 1. Find the podcast
+podracer search "Lex Fridman"
+
+# 2. Import episodes (without subscribing) and find the one you want
+podracer episodes --feed <rss_url> --search "Hamkins"
+
+# 3. Process it (download → transcribe → summarize)
+podracer process <episode_id> --backend openrouter --model deepseek/deepseek-v4-flash
+```
+
+Key features:
+- `podracer episodes --feed <url>` imports podcast + episodes to DB without subscribing
+- `--search <term>` filters episodes by title substring
+- `podracer process <episode_id>` runs full pipeline: download → transcribe → summarize
+- Uses `--force` to redo existing transcription/summary
+- Podcast exists in DB for record-keeping but won't be auto-synced
 
 ### Phase 2: Pipeline CLI + Job Queue
 
@@ -172,7 +213,7 @@ Podracer talks to AI models through HTTP — always. Whether the model is local 
 |-------|-------------|------|-------|---------|
 | Gemma 4 E4B | vLLM bf16 | ~22 GB | ~87s/ep | Good |
 | Qwen 3.6 35B MoE | Ollama Q4 | ~23 GB | ~210s/ep | Excellent |
-| Qwen 3.6 35B MoE | OpenRouter | N/A | ~45s/ep | Excellent |
+| DeepSeek V4 Flash | OpenRouter | N/A | ~160s/ep | Excellent |
 
 27B+ dense models do not fit on single 32GB GPU via vLLM. See [inference backends](2026-04-23-inference-backends.md) and [eval results](2026-04-24-summarization-eval-results.md) for details.
 
