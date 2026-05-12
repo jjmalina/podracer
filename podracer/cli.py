@@ -157,13 +157,13 @@ def cmd_episodes(args):
         return
 
     print(f"\n  {podcast.title} — {podcast.author or ''}")
-    print(f"  {'─' * 60}")
-    print(f"  {'ID':<5} {'Published':<12} {'Duration':<10} {'Title':<40} {'Status'}")
-    print(f"  {'─'*5} {'─'*12} {'─'*10} {'─'*40} {'─'*10}")
+    print(f"  {'─' * 100}")
+    print(f"  {'ID':<5} {'Published':<12} {'Duration':<10} {'Status':<10} Title")
+    print(f"  {'─'*5} {'─'*12} {'─'*10} {'─'*10} {'─'*60}")
     for ep in db_episodes:
         pub = (ep.published_at or "")[:10]
         dur = _format_duration(ep.duration_seconds)
-        print(f"  {ep.id:<5} {pub:<12} {dur:<10} {ep.title[:40]:<40} {ep.status}")
+        print(f"  {ep.id:<5} {pub:<12} {dur:<10} {ep.status:<10} {ep.title}")
 
 
 def _download_one(conn, episode, podcast=None, json_output=False):
