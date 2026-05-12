@@ -7,8 +7,13 @@
     <a href="/podcasts/{{ podcast.id }}">{{ podcast.title }}</a>
     {% if episode.published_at %} · {{ episode.published_at[:10] }}{% endif %}
     {% if episode.duration_seconds %} · {{ format_duration(episode.duration_seconds) }}{% endif %}
+    · <span class="badge badge-{{ episode.status }}">{{ episode.status }}</span>
   </p>
 </hgroup>
+
+{% if episode.description and not episode.show_notes %}
+<p>{{ episode.description }}</p>
+{% endif %}
 
 {% if episode.show_notes %}
 <section>

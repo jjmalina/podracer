@@ -3,6 +3,9 @@
 {% block content %}
 <h1>Podcasts</h1>
 {% if podcasts %}
+<form method="post" action="/podcasts/sync-all" style="display:inline">
+  <button type="submit" class="outline">Sync All</button>
+</form>
 <table>
   <thead>
     <tr>

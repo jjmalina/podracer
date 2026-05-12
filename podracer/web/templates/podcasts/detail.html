@@ -9,6 +9,19 @@
 <p>{{ podcast.description }}</p>
 {% endif %}
 
+{% if podcast.subscribed %}
+<form method="post" action="/podcasts/{{ podcast.id }}/unsubscribe" style="display:inline">
+  <button type="submit" class="outline secondary">Unsubscribe</button>
+</form>
+{% else %}
+<form method="post" action="/podcasts/{{ podcast.id }}/subscribe" style="display:inline">
+  <button type="submit">Subscribe</button>
+</form>
+{% endif %}
+<form method="post" action="/podcasts/{{ podcast.id }}/sync" style="display:inline">
+  <button type="submit" class="outline">Sync Episodes</button>
+</form>
+
 <h2>Episodes</h2>
 <nav>
   <ul>
@@ -34,13 +47,7 @@
       <td>{{ (ep.published_at or "")[:10] }}</td>
       <td>{{ format_duration(ep.duration_seconds) }}</td>
       <td><span class="badge badge-{{ ep.status }}">{{ ep.status }}</span></td>
-      <td>
-        {% if ep.status == "summarized" %}
-        <a href="/episodes/{{ ep.id }}">{{ ep.title }}</a>
-        {% else %}
-        {{ ep.title }}
-        {% endif %}
-      </td>
+      <td><a href="/episodes/{{ ep.id }}">{{ ep.title }}</a></td>
     </tr>
     {% endfor %}
   </tbody>

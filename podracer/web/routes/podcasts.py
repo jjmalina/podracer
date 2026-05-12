@@ -1,7 +1,17 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
-from podracer.db import get_all_podcasts, get_episode_count, get_episodes, get_podcast
+from podracer.db import (
+    get_all_podcasts,
+    get_episode_count,
+    get_episodes,
+    get_podcast,
+    subscribe,
+    unsubscribe,
+    update_podcast_synced,
+    upsert_episode,
+)
+from podracer.feed import fetch_episodes
 
 router = APIRouter()
 
@@ -29,6 +39,46 @@ def podcast_list(request: Request):
         "request": request,
         "podcasts": items,
     })
+
+
+@router.post("/podcasts/{podcast_id}/subscribe")
+def podcast_subscribe(request: Request, podcast_id: int):
+    db = request.app.state.db
+    subscribe(db, podcast_id)
+    return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
+
+
+@router.post("/podcasts/{podcast_id}/unsubscribe")
+def podcast_unsubscribe(request: Request, podcast_id: int):
+    db = request.app.state.db
+    unsubscribe(db, podcast_id)
+    return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
+
+
+def _sync_feed(db, podcast_id: int, feed_url: str) -> int:
+    episodes = fetch_episodes(feed_url)
+    for ep in episodes:
+        upsert_episode(db, podcast_id, ep)
+    db.commit()
+    update_podcast_synced(db, podcast_id)
+    return len(episodes)
+
+
+@router.post("/podcasts/{podcast_id}/sync")
+def podcast_sync(request: Request, podcast_id: int):
+    db = request.app.state.db
+    podcast = get_podcast(db, podcast_id)
+    if podcast:
+        _sync_feed(db, podcast_id, podcast.feed_url)
+    return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
+
+
+@router.post("/podcasts/sync-all")
+def podcast_sync_all(request: Request):
+    db = request.app.state.db
+    for podcast in get_all_podcasts(db):
+        _sync_feed(db, podcast.id, podcast.feed_url)
+    return RedirectResponse(url="/podcasts", status_code=303)
 
 
 STATUSES = ["summarized", "transcribed", "downloaded", "pending"]

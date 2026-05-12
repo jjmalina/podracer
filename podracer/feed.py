@@ -47,7 +47,10 @@ def _get_audio_url(entry: dict) -> str | None:
 def _strip_html(text: str | None) -> str | None:
     if not text:
         return None
-    clean = re.sub(r"<[^>]+>", "", text)
+    clean = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    clean = re.sub(r"</(?:p|div|li|h[1-6]|tr|blockquote)>", "\n", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"<[^>]+>", "", clean)
+    clean = re.sub(r"\n{3,}", "\n\n", clean)
     return clean.strip() or None
 
 

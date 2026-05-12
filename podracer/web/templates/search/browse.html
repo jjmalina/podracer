@@ -9,6 +9,10 @@
 <p>{{ meta.description }}</p>
 {% endif %}
 
+<form method="post" action="/search/subscribe?feed_url={{ feed_url | urlencode }}" style="display:inline">
+  <button type="submit">Subscribe</button>
+</form>
+
 <h2>Episodes</h2>
 {% if episodes %}
 <table>

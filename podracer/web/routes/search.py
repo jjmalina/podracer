@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
+from podracer.db import subscribe, upsert_podcast
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.search import search_podcasts
 
@@ -42,5 +43,16 @@ def browse_feed(request: Request, feed_url: str):
         "request": request,
         "meta": meta,
         "episodes": episodes,
+        "feed_url": feed_url,
         "format_duration": _format_duration,
     })
+
+
+@router.post("/subscribe")
+def subscribe_from_search(request: Request, feed_url: str):
+    db = request.app.state.db
+    meta = fetch_feed_metadata(feed_url)
+    podcast_id = upsert_podcast(db, meta.title, meta.author, feed_url,
+                                meta.artwork_url, meta.description)
+    subscribe(db, podcast_id)
+    return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
