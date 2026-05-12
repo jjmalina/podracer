@@ -350,8 +350,10 @@ def cmd_summarize(args):
     else:
         backend = Backend.ollama(model, base_url or "http://localhost:11434")
 
+    podcast = get_podcast(conn, episode.podcast_id)
     logger.info("Summarizing: %s", episode.title)
-    result = summarize(transcript.text, backend=backend, show_notes=episode.show_notes)
+    result = summarize(transcript.text, backend=backend, show_notes=episode.show_notes,
+                       podcast_description=podcast.description if podcast else None)
 
     save_summary(conn, episode.id, result.model_dump_json(), model, backend_name)
 
@@ -456,7 +458,8 @@ def cmd_process(args):
             backend = Backend.ollama(model_name, base_url or "http://localhost:11434")
 
         logger.info("Summarizing: %s", episode.title)
-        result = summarize(transcript_text, backend=backend, show_notes=episode.show_notes)
+        result = summarize(transcript_text, backend=backend, show_notes=episode.show_notes,
+                           podcast_description=podcast.description)
         save_summary(conn, episode.id, result.model_dump_json(), model_name, backend_name)
 
     if args.json:

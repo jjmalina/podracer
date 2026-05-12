@@ -12,6 +12,8 @@ def print_summary(result: PodcastSummary) -> None:
     print("SPEAKERS")
     print("=" * 60)
     for s in result.speakers:
+        if s.role.lower() == "advertiser":
+            continue
         print(f"  {s.label} = {s.name} ({s.role})")
 
     print("\n" + "=" * 60)

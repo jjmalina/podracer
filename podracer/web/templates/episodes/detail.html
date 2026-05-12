@@ -36,7 +36,7 @@
       <tr><th>Name</th><th>Role</th></tr>
     </thead>
     <tbody>
-      {% for s in summary.speakers %}
+      {% for s in summary.speakers if s.role.lower() != 'advertiser' %}
       <tr><td>{{ s.name }}</td><td>{{ s.role }}</td></tr>
       {% endfor %}
     </tbody>

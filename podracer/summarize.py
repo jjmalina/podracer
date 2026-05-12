@@ -39,26 +39,41 @@ SPEAKER_ID_PROMPT = """\
 You are given a timestamped podcast transcript where speakers are labeled as \
 SPEAKER_00, SPEAKER_01, etc. Your job is to identify each speaker's real name.
 
-Look for these clues:
-- Hosts introducing themselves ("I'm Patrick Serezna and I'm Kevin Muir")
+If show notes or an episode description are provided, use them as the \
+authoritative source for the correct spelling of all names. Transcription \
+from audio frequently misspells names (e.g. "Wazenthal" instead of \
+"Weisenthal", "Allaway" instead of "Alloway"). Always cross-reference \
+names you hear in the transcript against the show notes and use the show \
+notes spelling.
+
+Also look for these clues in the transcript:
+- Hosts introducing themselves ("I'm Patrick Ceresna and I'm Kevin Muir")
 - Hosts introducing guests ("we welcome Craig Shapiro to the show")
 - Speakers referring to each other by name ("Craig, thanks for coming")
 - Self-identification ("I recently joined Ninja Trader")
 
-For each speaker label that appears in the transcript, provide:
-- Their real name (or a descriptive label like "Producer" if unknown)
-- Their role or title if mentioned
-- The timestamp and quote where they are identified
+Important rules:
+- If multiple SPEAKER labels refer to the same person (common with diarization), \
+merge them into a single entry. List all labels in the "label" field separated \
+by commas (e.g. "SPEAKER_00, SPEAKER_03").
+- Each real person should appear exactly once in your output.
+- For advertisement/sponsor voices, set the role to "advertiser". This helps \
+filter ads from the analysis.
 
-Be thorough — check the entire transcript for clues. Multiple labels may \
-refer to the same person if the diarization split them."""
+For each unique speaker, provide:
+- Their real name (or a descriptive label like "Advertiser" if unknown)
+- Their role or title if mentioned (use "advertiser" for ad/sponsor voices)
+- The timestamp and quote where they are identified"""
 
 SUMMARY_PROMPT = """\
 You are a podcast summarization assistant. You will be given a speaker key \
-followed by a timestamped transcript. Write a concise summary (3-5 paragraphs) \
-capturing the key topics discussed, main arguments or insights shared by each \
-speaker, and any notable takeaways. Use real speaker names from the speaker key. \
-Do not invent information not in the transcript."""
+followed by a timestamped transcript. Write a concise summary of 3-5 short \
+paragraphs (no more than 500 words total) capturing the key topics discussed, \
+main arguments or insights shared by each speaker, and any notable takeaways. \
+Use real speaker names from the speaker key. Do not quote or echo the \
+transcript — synthesize the content in your own words. Do not invent \
+information not in the transcript. \
+Ignore advertisement and sponsor segments entirely."""
 
 CHAPTERS_PROMPT = """\
 You are a podcast chapter generator. You will be given a speaker key followed \
@@ -66,7 +81,8 @@ by a timestamped transcript. Break the episode into logical chapters or segments
 Aim for 10-20 chapters that reflect natural topic transitions. Each chapter needs \
 a short descriptive title, the timestamp (HH:MM:SS) where it begins, and a 1-2 \
 sentence summary. Use real speaker names from the speaker key. Cover the entire \
-episode from start to finish — do not skip any major section."""
+episode from start to finish — do not skip any major section. \
+Skip advertisement and sponsor segments — do not create chapters for ads."""
 
 INSIGHTS_PROMPT = """\
 You are a podcast analyst. You will be given a speaker key followed by a \
@@ -74,7 +90,8 @@ timestamped transcript. Extract the key insights and takeaways — things a \
 listener would want to remember or act on. For each insight, provide the text \
 of the insight, the timestamp (HH:MM:SS) where it appears, and the real name \
 of the speaker who expressed it (using the speaker key). Aim for 10-15 insights \
-covering the full episode from start to finish."""
+covering the full episode from start to finish. \
+Ignore advertisement and sponsor segments entirely."""
 
 SPEAKER_TAKES_PROMPT = """\
 You are a podcast analyst. You will be given a speaker key followed by a \
@@ -83,7 +100,7 @@ specific to individual speakers — things that represent their distinct \
 perspective rather than group consensus. For each take, provide the speaker's \
 real name (using the speaker key), what they argued or claimed, and the \
 timestamp (HH:MM:SS). Aim for 10-15 takes covering the full episode and \
-all major speakers."""
+all major speakers. Ignore advertisement and sponsor segments entirely."""
 
 
 class SpeakerIdentification(BaseModel):
@@ -149,8 +166,30 @@ def _extract_json(content: str) -> str:
 
 
 def _repair_truncated_json(content: str) -> str:
-    """Try to close truncated JSON arrays/objects."""
+    """Try to close truncated JSON strings/arrays/objects."""
     import json
+    try:
+        json.loads(content)
+        return content
+    except json.JSONDecodeError:
+        pass
+    content = content.rstrip()
+    in_string = False
+    escaped = False
+    for ch in content:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        content += '"'
+    open_brackets = content.count("[") - content.count("]")
+    open_braces = content.count("{") - content.count("}")
+    content += "]" * open_brackets + "}" * open_braces
     try:
         json.loads(content)
         return content
@@ -159,11 +198,7 @@ def _repair_truncated_json(content: str) -> str:
     last_brace = content.rfind("}")
     if last_brace == -1:
         return content
-    trimmed = content[:last_brace + 1]
-    open_brackets = trimmed.count("[") - trimmed.count("]")
-    open_braces = trimmed.count("{") - trimmed.count("}")
-    trimmed += "]" * open_brackets + "}" * open_braces
-    return trimmed
+    return content[:last_brace + 1]
 
 
 def _chat_ollama(backend: Backend, system: str, user: str, schema: dict) -> str:
@@ -285,10 +320,25 @@ def _chat(backend: Backend, system: str, user: str, schema: dict) -> str:
     return _chat_ollama(backend, system, user, schema)
 
 
-def identify_speakers(transcript: str, backend: Backend) -> list[SpeakerIdentification]:
+def _build_context_prefix(podcast_description: str | None = None,
+                          show_notes: str | None = None) -> str:
+    parts = []
+    if podcast_description:
+        parts.append(f"PODCAST DESCRIPTION:\n{podcast_description}")
+    if show_notes:
+        parts.append(f"SHOW NOTES:\n{show_notes}")
+    if parts:
+        return "\n\n".join(parts) + "\n\nTRANSCRIPT:\n"
+    return ""
+
+
+def identify_speakers(transcript: str, backend: Backend,
+                      show_notes: str | None = None,
+                      podcast_description: str | None = None) -> list[SpeakerIdentification]:
+    prefix = _build_context_prefix(podcast_description, show_notes)
     content = _chat(
         backend, SPEAKER_ID_PROMPT,
-        f"Identify every speaker in this transcript:\n\n{transcript}",
+        f"Identify every speaker in this transcript:\n\n{prefix}{transcript}",
         SpeakerIdentifications.model_json_schema(),
     )
     return SpeakerIdentifications.model_validate_json(content).speakers
@@ -306,8 +356,12 @@ def format_speaker_key(speakers: list[SpeakerIdentification]) -> str:
 
 def rewrite_transcript(transcript: str, speakers: list[SpeakerIdentification]) -> str:
     result = transcript
-    for s in sorted(speakers, key=lambda x: len(x.label), reverse=True):
-        result = result.replace(f"[{s.label}]", f"[{s.name}]")
+    replacements: list[tuple[str, str]] = []
+    for s in speakers:
+        for label in (part.strip() for part in s.label.split(",")):
+            replacements.append((label, s.name))
+    for label, name in sorted(replacements, key=lambda x: len(x[0]), reverse=True):
+        result = result.replace(f"[{label}]", f"[{name}]")
     return result
 
 
@@ -322,15 +376,16 @@ def _step(label: str, func, *args):
 
 
 def summarize(transcript: str, backend: Backend | None = None,
-              show_notes: str | None = None) -> PodcastSummary:
+              show_notes: str | None = None,
+              podcast_description: str | None = None) -> PodcastSummary:
     """Summarize a transcript in multiple focused passes."""
     if backend is None:
         backend = Backend.ollama("gemma4:e4b")
 
-    speakers = _step("speakers", identify_speakers, transcript, backend)
+    speakers = _step("speakers", identify_speakers, transcript, backend, show_notes, podcast_description)
     named_transcript = rewrite_transcript(transcript, speakers)
 
-    notes_prefix = f"SHOW NOTES:\n{show_notes}\n\nTRANSCRIPT:\n" if show_notes else ""
+    notes_prefix = _build_context_prefix(podcast_description, show_notes)
 
     summary_content = _step(
         "summary", _chat,
