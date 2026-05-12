@@ -1,0 +1,15 @@
+{% if results %}
+<p>{{ results | length }} result(s)</p>
+{% for r in results %}
+<article>
+  <header><strong>{{ r.title }}</strong></header>
+  <p>{{ r.author or "" }}</p>
+  {% if r.description %}<p>{{ r.description[:200] }}</p>{% endif %}
+  <footer>
+    <a href="/search/browse?feed_url={{ r.feed_url | urlencode }}" role="button" class="outline">Browse Episodes</a>
+  </footer>
+</article>
+{% endfor %}
+{% else %}
+<p>No results found.</p>
+{% endif %}

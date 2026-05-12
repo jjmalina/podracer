@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ episode.title }} — podracer{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>{{ episode.title }}</h1>
+  <p>
+    <a href="/podcasts/{{ podcast.id }}">{{ podcast.title }}</a>
+    {% if episode.published_at %} · {{ episode.published_at[:10] }}{% endif %}
+    {% if episode.duration_seconds %} · {{ format_duration(episode.duration_seconds) }}{% endif %}
+  </p>
+</hgroup>
+
+{% if episode.show_notes %}
+<section>
+  <details open>
+    <summary>Show Notes</summary>
+    {% for paragraph in episode.show_notes.split('\n') %}
+    {% if paragraph.strip() %}
+    <p>{{ paragraph }}</p>
+    {% endif %}
+    {% endfor %}
+  </details>
+</section>
+{% endif %}
+
+{% if summary %}
+<section>
+  <h2>Speakers</h2>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      {% for s in summary.speakers %}
+      <tr><td>{{ s.name }}</td><td>{{ s.role }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Summary</h2>
+  {% for paragraph in summary.summary.split('\n\n') %}
+  <p>{{ paragraph }}</p>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Chapters</h2>
+  {% for ch in summary.chapters %}
+  <article>
+    <header><strong>[{{ ch.timestamp }}] {{ ch.title }}</strong></header>
+    <p>{{ ch.summary }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Insights</h2>
+  {% for ins in summary.insights %}
+  <article>
+    <header><strong>[{{ ins.timestamp }}]</strong> {{ ins.speaker }}</header>
+    <p>{{ ins.text }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Speaker Takes</h2>
+  {% for take in summary.speaker_takes %}
+  <article>
+    <header><strong>[{{ take.timestamp }}]</strong> {{ take.speaker }}</header>
+    <p>{{ take.take }}</p>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<p>This episode has not been summarized yet.</p>
+{% endif %}
+{% endblock %}

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     audio_url TEXT NOT NULL,
     duration_seconds INTEGER,
     description TEXT,
+    show_notes TEXT,
     local_path TEXT,
     file_size_bytes INTEGER,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -82,8 +83,15 @@ def get_connection(db_path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(episodes)").fetchall()}
+    if "show_notes" not in cols:
+        conn.execute("ALTER TABLE episodes ADD COLUMN show_notes TEXT")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    _migrate(conn)
     for key, value in DEFAULT_CONFIG.items():
         conn.execute(
             "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
@@ -134,18 +142,29 @@ def get_subscribed_podcasts(conn: sqlite3.Connection) -> list[Podcast]:
     return [_podcast_from_row(r) for r in rows]
 
 
+def get_all_podcasts(conn: sqlite3.Connection) -> list[Podcast]:
+    rows = conn.execute("SELECT * FROM podcasts ORDER BY title").fetchall()
+    return [_podcast_from_row(r) for r in rows]
+
+
+def get_episode_count(conn: sqlite3.Connection, podcast_id: int) -> int:
+    row = conn.execute("SELECT COUNT(*) as cnt FROM episodes WHERE podcast_id = ?", (podcast_id,)).fetchone()
+    return row["cnt"]
+
+
 def upsert_episode(conn: sqlite3.Connection, podcast_id: int, ep: FeedEpisode) -> None:
     conn.execute(
         """INSERT INTO episodes (podcast_id, guid, title, audio_url, published_at,
-                                 duration_seconds, description)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+                                 duration_seconds, description, show_notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(podcast_id, guid) DO UPDATE SET
              title=excluded.title, audio_url=excluded.audio_url,
              published_at=excluded.published_at,
              duration_seconds=excluded.duration_seconds,
-             description=excluded.description""",
+             description=excluded.description,
+             show_notes=excluded.show_notes""",
         (podcast_id, ep.guid, ep.title, ep.audio_url, ep.published_at,
-         ep.duration_seconds, ep.description),
+         ep.duration_seconds, ep.description, ep.show_notes),
     )
 
 

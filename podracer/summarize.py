@@ -2,11 +2,12 @@ from dataclasses import dataclass
 
 import httpx
 from pydantic import BaseModel
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_exponential
 
 from podracer import logger
 
 DEFAULT_TIMEOUT = 600.0
-DEFAULT_CTX = 65536
+DEFAULT_CTX = 131072
 DEFAULT_MAX_TOKENS = 16384
 
 
@@ -249,12 +250,22 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict) -> 
         },
     }
     headers = {"Authorization": f"Bearer {backend.api_key}"}
-    resp = httpx.post(
-        f"{backend.base_url}/v1/chat/completions",
-        json=payload,
-        headers=headers,
-        timeout=DEFAULT_TIMEOUT,
+
+    @retry(
+        retry=retry_if_result(lambda r: r.status_code == 429),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=5, min=5, max=60),
+        before_sleep=lambda rs: logger.warning("Rate limited, retrying (attempt %d/5)", rs.attempt_number),
     )
+    def _post():
+        return httpx.post(
+            f"{backend.base_url}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT,
+        )
+
+    resp = _post()
     if not resp.is_success:
         logger.error("OpenRouter request failed: %s", resp.text)
     resp.raise_for_status()
@@ -310,7 +321,8 @@ def _step(label: str, func, *args):
     return result
 
 
-def summarize(transcript: str, backend: Backend | None = None) -> PodcastSummary:
+def summarize(transcript: str, backend: Backend | None = None,
+              show_notes: str | None = None) -> PodcastSummary:
     """Summarize a transcript in multiple focused passes."""
     if backend is None:
         backend = Backend.ollama("gemma4:e4b")
@@ -318,10 +330,12 @@ def summarize(transcript: str, backend: Backend | None = None) -> PodcastSummary
     speakers = _step("speakers", identify_speakers, transcript, backend)
     named_transcript = rewrite_transcript(transcript, speakers)
 
+    notes_prefix = f"SHOW NOTES:\n{show_notes}\n\nTRANSCRIPT:\n" if show_notes else ""
+
     summary_content = _step(
         "summary", _chat,
         backend, SUMMARY_PROMPT,
-        f"Summarize this transcript:\n\n{named_transcript}",
+        f"Summarize this transcript:\n\n{notes_prefix}{named_transcript}",
         Summary.model_json_schema(),
     )
     summary = Summary.model_validate_json(summary_content).summary
@@ -329,7 +343,7 @@ def summarize(transcript: str, backend: Backend | None = None) -> PodcastSummary
     chapters_content = _step(
         "chapters", _chat,
         backend, CHAPTERS_PROMPT,
-        f"Generate chapters for this transcript:\n\n{named_transcript}",
+        f"Generate chapters for this transcript:\n\n{notes_prefix}{named_transcript}",
         ChapterList.model_json_schema(),
     )
     chapters = ChapterList.model_validate_json(chapters_content).chapters
@@ -337,7 +351,7 @@ def summarize(transcript: str, backend: Backend | None = None) -> PodcastSummary
     insights_content = _step(
         "insights", _chat,
         backend, INSIGHTS_PROMPT,
-        f"Extract insights from this transcript:\n\n{named_transcript}",
+        f"Extract insights from this transcript:\n\n{notes_prefix}{named_transcript}",
         InsightList.model_json_schema(),
     )
     insights = InsightList.model_validate_json(insights_content).insights
@@ -345,7 +359,7 @@ def summarize(transcript: str, backend: Backend | None = None) -> PodcastSummary
     takes_content = _step(
         "speaker_takes", _chat,
         backend, SPEAKER_TAKES_PROMPT,
-        f"Extract unique speaker takes from this transcript:\n\n{named_transcript}",
+        f"Extract unique speaker takes from this transcript:\n\n{notes_prefix}{named_transcript}",
         SpeakerTakeList.model_json_schema(),
     )
     speaker_takes = SpeakerTakeList.model_validate_json(takes_content).speaker_takes

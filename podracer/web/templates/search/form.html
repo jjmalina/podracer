@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Search — podracer{% endblock %}
+{% block content %}
+<h1>Search Podcasts</h1>
+
+<form hx-get="/search/results" hx-target="#results" hx-indicator="#search-spinner">
+  <fieldset role="group">
+    <input type="text" name="q" placeholder="Search Podcast Index..." required>
+    <button type="submit">Search</button>
+  </fieldset>
+</form>
+
+<h2>Browse by RSS Feed</h2>
+<form action="/search/browse" method="get">
+  <fieldset role="group">
+    <input type="url" name="feed_url" placeholder="RSS feed URL..." required>
+    <button type="submit">Browse</button>
+  </fieldset>
+</form>
+
+<div id="results">
+  <span id="search-spinner" class="htmx-indicator" aria-busy="true">Searching...</span>
+</div>
+{% endblock %}

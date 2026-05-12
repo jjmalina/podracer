@@ -22,6 +22,7 @@ class Episode(BaseModel):
     audio_url: str
     duration_seconds: int | None = None
     description: str | None = None
+    show_notes: str | None = None
     local_path: str | None = None
     file_size_bytes: int | None = None
     status: str = "pending"
@@ -61,3 +62,4 @@ class FeedEpisode(BaseModel):
     published_at: str | None = None
     duration_seconds: int | None = None
     description: str | None = None
+    show_notes: str | None = None

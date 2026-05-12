@@ -51,6 +51,21 @@ def _strip_html(text: str | None) -> str | None:
     return clean.strip() or None
 
 
+def _get_show_notes(entry: dict) -> str | None:
+    """Extract the richest available show notes from a feed entry."""
+    content_list = entry.get("content", [])
+    if content_list:
+        longest = max(content_list, key=lambda c: len(c.get("value", "")))
+        text = _strip_html(longest.get("value"))
+        if text:
+            return text
+    for field in ("summary", "description", "subtitle"):
+        text = _strip_html(entry.get(field))
+        if text and len(text) > 200:
+            return text
+    return None
+
+
 def fetch_feed_metadata(feed_url: str) -> FeedMetadata:
     feed = feedparser.parse(feed_url)
     f = feed.feed
@@ -79,5 +94,6 @@ def fetch_episodes(feed_url: str, limit: int | None = None) -> list[FeedEpisode]
             published_at=_parse_date(entry),
             duration_seconds=parse_duration(entry.get("itunes_duration")),
             description=_strip_html(entry.get("summary") or entry.get("description")),
+            show_notes=_get_show_notes(entry),
         ))
     return episodes

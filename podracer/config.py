@@ -21,8 +21,8 @@ class Config:
     diarize: bool = True
 
     # Summarization
-    summarize_backend: str = "ollama"
-    summarize_model: str = "gemma4:e4b"
+    summarize_backend: str = "openrouter"
+    summarize_model: str = "deepseek/deepseek-v4-flash"
     summarize_base_url: str | None = None
 
     # API keys

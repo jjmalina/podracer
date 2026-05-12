@@ -5,6 +5,7 @@ import sys
 from podracer import logger
 from podracer.config import Config, load_config
 from podracer.db import (
+    get_all_podcasts,
     get_connection,
     get_episode,
     get_episodes,
@@ -134,6 +135,9 @@ def cmd_episodes(args):
         conn.commit()
         _sync_episodes(conn, podcast_id, args.feed, limit=args.limit)
         podcast = get_podcast(conn, podcast_id)
+        if not podcast:
+            logger.error("Failed to create podcast.")
+            sys.exit(1)
     elif args.podcast_id:
         podcast = get_podcast(conn, args.podcast_id)
         if not podcast:
@@ -227,10 +231,10 @@ def cmd_sync(args):
             sys.exit(1)
         podcasts = [podcast]
     else:
-        podcasts = get_subscribed_podcasts(conn)
+        podcasts = get_all_podcasts(conn)
 
     if not podcasts:
-        print("No subscriptions. Use `podracer subscribe <rss_url>` first.")
+        print("No podcasts found. Use `podracer subscribe <rss_url>` to add one.")
         return
 
     for podcast in podcasts:
@@ -347,7 +351,7 @@ def cmd_summarize(args):
         backend = Backend.ollama(model, base_url or "http://localhost:11434")
 
     logger.info("Summarizing: %s", episode.title)
-    result = summarize(transcript.text, backend=backend)
+    result = summarize(transcript.text, backend=backend, show_notes=episode.show_notes)
 
     save_summary(conn, episode.id, result.model_dump_json(), model, backend_name)
 
@@ -357,6 +361,19 @@ def cmd_summarize(args):
         from podracer.summarize_cli import print_summary
 
         print_summary(result)
+
+
+def cmd_serve(args):
+    import uvicorn
+
+    if args.reload:
+        uvicorn.run("podracer.web.app:app", host=args.host, port=args.port,
+                    reload=True, reload_dirs=["podracer"])
+    else:
+        from podracer.web.app import create_app
+        cfg = _config()
+        app = create_app(cfg)
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 def cmd_process(args):
@@ -439,7 +456,7 @@ def cmd_process(args):
             backend = Backend.ollama(model_name, base_url or "http://localhost:11434")
 
         logger.info("Summarizing: %s", episode.title)
-        result = summarize(transcript_text, backend=backend)
+        result = summarize(transcript_text, backend=backend, show_notes=episode.show_notes)
         save_summary(conn, episode.id, result.model_dump_json(), model_name, backend_name)
 
     if args.json:
@@ -520,6 +537,12 @@ def main():
     p_process.add_argument("--base-url", default=None, help="Backend API base URL")
     p_process.add_argument("--force", action="store_true", help="Redo transcription and summarization")
     p_process.set_defaults(func=cmd_process)
+
+    p_serve = subparsers.add_parser("serve", help="Start the web UI")
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    p_serve.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
+    p_serve.add_argument("--reload", action="store_true", help="Auto-reload on code changes")
+    p_serve.set_defaults(func=cmd_serve)
 
     p_sync = subparsers.add_parser("sync", help="Sync podcast feeds")
     p_sync.add_argument("podcast_id", type=int, nargs="?", help="Podcast ID (omit to sync all subscriptions)")

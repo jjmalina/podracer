@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Podcasts — podracer{% endblock %}
+{% block content %}
+<h1>Podcasts</h1>
+{% if podcasts %}
+<table>
+  <thead>
+    <tr>
+      <th>Title</th>
+      <th>Author</th>
+      <th>Episodes</th>
+      <th>Subscribed</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in podcasts %}
+    <tr>
+      <td><a href="/podcasts/{{ p.podcast.id }}">{{ p.podcast.title }}</a></td>
+      <td>{{ p.podcast.author or "" }}</td>
+      <td>{{ p.episode_count }}</td>
+      <td>{% if p.podcast.subscribed %}<span class="badge badge-sub">Yes</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No podcasts yet. <a href="/search">Search</a> for one or use the CLI to add podcasts.</p>
+{% endif %}
+{% endblock %}

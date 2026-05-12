@@ -1,0 +1,38 @@
+.badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 1rem;
+  font-weight: 600;
+}
+
+.badge-pending { background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); }
+.badge-downloaded { background: #3b82f6; color: #fff; }
+.badge-transcribed { background: #f59e0b; color: #fff; }
+.badge-summarized { background: #10b981; color: #fff; }
+.badge-sub { background: #8b5cf6; color: #fff; }
+
+section { margin-bottom: 2rem; }
+
+article header { padding-bottom: 0; }
+article p { margin-bottom: 0.5rem; }
+
+.theme-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  width: auto;
+  color: var(--pico-contrast);
+}
+.theme-btn svg {
+  vertical-align: middle;
+}
+
+a.active-filter {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator { display: inline; }

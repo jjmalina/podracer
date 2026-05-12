@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title }} — podracer{% endblock %}
+{% block content %}
+<hgroup>
+  <h1>{{ meta.title }}</h1>
+  <p>{{ meta.author or "" }}</p>
+</hgroup>
+{% if meta.description %}
+<p>{{ meta.description }}</p>
+{% endif %}
+
+<h2>Episodes</h2>
+{% if episodes %}
+<table>
+  <thead>
+    <tr>
+      <th>Published</th>
+      <th>Duration</th>
+      <th>Title</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for ep in episodes %}
+    <tr>
+      <td>{{ (ep.published_at or "")[:10] }}</td>
+      <td>{{ format_duration(ep.duration_seconds) }}</td>
+      <td>{{ ep.title }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No episodes found in this feed.</p>
+{% endif %}
+{% endblock %}

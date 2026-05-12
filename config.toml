@@ -9,9 +9,8 @@ compute_type = "float16"
 diarize = true
 
 [summarize]
-backend = "ollama"
-model = "gemma4:e4b"
-# base_url = "http://localhost:11434"
+backend = "openrouter"
+model = "deepseek/deepseek-v4-flash"
 
 # API keys can go here or in .credentials/ files or env vars.
 # Priority: env vars > config.toml > .credentials/ files
