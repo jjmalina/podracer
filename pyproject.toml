@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Local-first podcast knowledge platform"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "whisperx>=3.1.0",
     "pydantic>=2.0",
     "httpx>=0.27",
     "feedparser>=6.0",
@@ -13,28 +12,40 @@ dependencies = [
     "jinja2>=3.1",
     "tenacity>=8.0",
     "deepgram-sdk>=3.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# Local whisperx transcription service. Required on the GPU host that runs
+# `python -m podracer.whisper_service`. The main podracer install does NOT
+# pull torch/whisperx so it stays slim on CPU-only deployments.
+whisper = [
+    "whisperx>=3.1.0",
 ]
 
 [project.scripts]
 podracer = "podracer.cli:main"
+podracer-whisper = "podracer.whisper_service.__main__:main"
 transcribe = "podracer.transcribe:main"
 summarize = "podracer.summarize_cli:main"
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
+preview = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "I", "UP", "PLC0415"]
 
 [tool.ty.environment]
 python-version = "3.12"
 
 [[tool.ty.overrides]]
-include = ["podracer/transcribe.py"]
+include = ["podracer/whisper_service/runner.py"]
 
 [tool.ty.overrides.rules]
 invalid-assignment = "ignore"
+unknown-argument = "ignore"
 
 [build-system]
 requires = ["hatchling"]

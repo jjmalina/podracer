@@ -15,12 +15,19 @@ class Config:
     media_dir: str = "./data/media/"
 
     # Transcription
-    transcribe_backend: str = "whisperx"
+    transcribe_backend: str = "deepgram"
     transcribe_whisperx_model: str = "small"
     transcribe_deepgram_model: str = "nova-3"
     transcribe_device: str = "cuda"
     transcribe_compute_type: str = "float16"
+    transcribe_service_url: str | None = None
+    transcribe_service_auth_token: str | None = None
     diarize: bool = True
+
+    # Whisper service (server-side, when running `podracer whisper-serve`)
+    whisper_service_host: str = "0.0.0.0"
+    whisper_service_port: int = 9000
+    whisper_service_auth_token: str | None = None
 
     # Summarization
     summarize_backend: str = "openrouter"
@@ -88,7 +95,18 @@ def load_config() -> Config:
         config.transcribe_deepgram_model = transcribe.get("deepgram_model", config.transcribe_deepgram_model)
         config.transcribe_device = transcribe.get("device", config.transcribe_device)
         config.transcribe_compute_type = transcribe.get("compute_type", config.transcribe_compute_type)
+        config.transcribe_service_url = transcribe.get("service_url", config.transcribe_service_url)
+        config.transcribe_service_auth_token = transcribe.get(
+            "service_auth_token", config.transcribe_service_auth_token,
+        )
         config.diarize = transcribe.get("diarize", config.diarize)
+
+        whisper_service = data.get("whisper_service", {})
+        config.whisper_service_host = whisper_service.get("host", config.whisper_service_host)
+        config.whisper_service_port = whisper_service.get("port", config.whisper_service_port)
+        config.whisper_service_auth_token = whisper_service.get(
+            "auth_token", config.whisper_service_auth_token,
+        )
 
         summarize = data.get("summarize", {})
         config.summarize_backend = summarize.get("backend", config.summarize_backend)

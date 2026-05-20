@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -44,8 +45,6 @@ def print_summary(result: PodcastSummary) -> None:
 
 
 def main():
-    import logging
-
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 
     parser = argparse.ArgumentParser(description="Summarize a podcast transcript")

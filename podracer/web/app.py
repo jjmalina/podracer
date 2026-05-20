@@ -8,6 +8,9 @@ from fastapi.templating import Jinja2Templates
 
 from podracer.config import Config, load_config
 from podracer.db import init_db
+from podracer.web.routes.episodes import router as episodes_router
+from podracer.web.routes.podcasts import router as podcasts_router
+from podracer.web.routes.search import router as search_router
 
 WEB_DIR = Path(__file__).parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -32,10 +35,6 @@ def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="podracer", lifespan=lifespan)
     app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-    from podracer.web.routes.episodes import router as episodes_router
-    from podracer.web.routes.podcasts import router as podcasts_router
-    from podracer.web.routes.search import router as search_router
 
     app.include_router(podcasts_router)
     app.include_router(episodes_router)

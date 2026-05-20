@@ -1,6 +1,10 @@
 import argparse
 import json
+import logging
+import os
 import sys
+
+import uvicorn
 
 from podracer import logger
 from podracer.config import Config, load_config
@@ -26,6 +30,10 @@ from podracer.db import (
 from podracer.download import download_episode
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.search import search_podcasts
+from podracer.summarize import Backend, PodcastSummary, summarize
+from podracer.summarize_cli import print_summary
+from podracer.transcribe import transcribe
+from podracer.web.app import create_app
 
 _cfg: Config | None = None
 
@@ -119,7 +127,7 @@ def cmd_list(args):
         return
 
     print(f"\n  {'ID':<5} {'Title':<45} {'Last Synced'}")
-    print(f"  {'─'*5} {'─'*45} {'─'*20}")
+    print(f"  {'─' * 5} {'─' * 45} {'─' * 20}")
     for p in podcasts:
         synced = (p.last_synced_at or "never")[:19]
         print(f"  {p.id:<5} {p.title[:45]:<45} {synced}")
@@ -163,7 +171,7 @@ def cmd_episodes(args):
     print(f"\n  {podcast.title} — {podcast.author or ''}")
     print(f"  {'─' * 100}")
     print(f"  {'ID':<5} {'Published':<12} {'Duration':<10} {'Status':<10} Title")
-    print(f"  {'─'*5} {'─'*12} {'─'*10} {'─'*10} {'─'*60}")
+    print(f"  {'─' * 5} {'─' * 12} {'─' * 10} {'─' * 10} {'─' * 60}")
     for ep in db_episodes:
         pub = (ep.published_at or "")[:10]
         dur = _format_duration(ep.duration_seconds)
@@ -275,35 +283,31 @@ def cmd_transcribe(args):
     else:
         audio_path = f"{media_dir}{episode.local_path}"
 
-    try:
-        from podracer.transcribe import transcribe
-    except (ImportError, AttributeError) as e:
-        logger.error("Transcription dependencies not available: %s", e)
-        sys.exit(1)
-
     cfg = _config()
     backend = args.backend or cfg.transcribe_backend
-    default_model = cfg.transcribe_deepgram_model if backend == "deepgram" else cfg.transcribe_whisperx_model
-    model = args.model or default_model
+    model = args.model or cfg.transcribe_deepgram_model
     diarize = not args.no_diarize
 
     if backend == "deepgram" and not cfg.deepgram_api_key:
         logger.error("Deepgram backend requires DEEPGRAM_API_KEY (config, credentials, or env).")
         sys.exit(1)
+    if backend == "whisperx-http" and not cfg.transcribe_service_url:
+        logger.error("whisperx-http backend requires transcribe.service_url in config.")
+        sys.exit(1)
 
-    logger.info("Transcribing: %s (backend=%s, model=%s)", episode.title, backend, model)
+    logger.info("Transcribing: %s (backend=%s)", episode.title, backend)
     text = transcribe(
         audio_path,
         backend=backend,
         model=model,
-        device=args.device or cfg.transcribe_device,
-        compute_type=args.compute_type or cfg.transcribe_compute_type,
-        hf_token=cfg.hf_token if diarize else None,
         deepgram_api_key=cfg.deepgram_api_key,
+        service_url=cfg.transcribe_service_url,
+        service_auth_token=cfg.transcribe_service_auth_token,
         diarize=diarize,
     )
 
-    save_transcript(conn, episode.id, text, f"{backend}:{model}")
+    model_tag = model if backend == "deepgram" else cfg.transcribe_whisperx_model
+    save_transcript(conn, episode.id, text, f"{backend}:{model_tag}")
 
     if args.json:
         saved = get_transcript(conn, episode.id)
@@ -325,9 +329,6 @@ def cmd_summarize(args):
         if args.json:
             print(existing.data)
         else:
-            from podracer.summarize import PodcastSummary
-            from podracer.summarize_cli import print_summary
-
             result = PodcastSummary.model_validate_json(existing.data)
             print_summary(result)
         return
@@ -337,8 +338,6 @@ def cmd_summarize(args):
         logger.error("No transcript for episode %s. Run `podracer transcribe %s` first.",
                       args.episode_id, args.episode_id)
         sys.exit(1)
-
-    from podracer.summarize import Backend, summarize
 
     cfg = _config()
     backend_name = args.backend or cfg.summarize_backend
@@ -366,19 +365,14 @@ def cmd_summarize(args):
     if args.json:
         print(result.model_dump_json(indent=2))
     else:
-        from podracer.summarize_cli import print_summary
-
         print_summary(result)
 
 
 def cmd_serve(args):
-    import uvicorn
-
     if args.reload:
         uvicorn.run("podracer.web.app:app", host=args.host, port=args.port,
                     reload=True, reload_dirs=["podracer"])
     else:
-        from podracer.web.app import create_app
         cfg = _config()
         app = create_app(cfg)
         uvicorn.run(app, host=args.host, port=args.port)
@@ -415,49 +409,42 @@ def cmd_process(args):
         logger.info("Transcript exists, skipping. Use --force to redo.")
         transcript_text = existing_transcript.text
     else:
-        try:
-            from podracer.transcribe import transcribe
-        except (ImportError, AttributeError) as e:
-            logger.error("Transcription dependencies not available: %s", e)
-            sys.exit(1)
-
         cfg = _config()
         tx_backend = cfg.transcribe_backend
-        model = cfg.transcribe_deepgram_model if tx_backend == "deepgram" else cfg.transcribe_whisperx_model
+        model = cfg.transcribe_deepgram_model
 
         if tx_backend == "deepgram" and not cfg.deepgram_api_key:
             logger.error("Deepgram backend requires DEEPGRAM_API_KEY.")
             sys.exit(1)
+        if tx_backend == "whisperx-http" and not cfg.transcribe_service_url:
+            logger.error("whisperx-http backend requires transcribe.service_url in config.")
+            sys.exit(1)
 
-        logger.info("Transcribing: %s (backend=%s, model=%s)", episode.title, tx_backend, model)
+        logger.info("Transcribing: %s (backend=%s)", episode.title, tx_backend)
         transcript_text = transcribe(
             audio_path,
             backend=tx_backend,
             model=model,
-            device=cfg.transcribe_device,
-            compute_type=cfg.transcribe_compute_type,
-            hf_token=cfg.hf_token,
             deepgram_api_key=cfg.deepgram_api_key,
+            service_url=cfg.transcribe_service_url,
+            service_auth_token=cfg.transcribe_service_auth_token,
             diarize=cfg.diarize,
         )
-        save_transcript(conn, episode.id, transcript_text, f"{tx_backend}:{model}")
+        model_tag = model if tx_backend == "deepgram" else cfg.transcribe_whisperx_model
+        save_transcript(conn, episode.id, transcript_text, f"{tx_backend}:{model_tag}")
 
     # Summarize
     existing_summary = get_summary(conn, args.episode_id)
     if existing_summary and not args.force:
         logger.info("Summary exists, skipping. Use --force to redo.")
-        from podracer.summarize import PodcastSummary
         result = PodcastSummary.model_validate_json(existing_summary.data)
     else:
-        from podracer.summarize import Backend, summarize
-
         cfg = _config()
         backend_name = args.backend or cfg.summarize_backend
         model_name = args.model or cfg.summarize_model
         base_url = args.base_url or cfg.summarize_base_url
 
         if backend_name == "openrouter":
-            import os
             api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.openrouter_api_key
             if not api_key:
                 logger.error("OPENROUTER_API_KEY not set.")
@@ -476,13 +463,10 @@ def cmd_process(args):
     if args.json:
         print(result.model_dump_json(indent=2))
     else:
-        from podracer.summarize_cli import print_summary
         print_summary(result)
 
 
 def main():
-    import logging
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
@@ -527,12 +511,9 @@ def main():
 
     p_transcribe = subparsers.add_parser("transcribe", help="Transcribe an episode")
     p_transcribe.add_argument("episode_id", type=int, help="Episode ID")
-    p_transcribe.add_argument("--backend", choices=["whisperx", "deepgram"], default=None,
+    p_transcribe.add_argument("--backend", choices=["deepgram", "whisperx-http"], default=None,
                               help="Transcription backend (default: from config)")
-    p_transcribe.add_argument("--model", default=None, help="Model name (default: from config)")
-    p_transcribe.add_argument("--device", default=None,
-                              help="Device: cuda or cpu (whisperx only)")
-    p_transcribe.add_argument("--compute-type", default=None, help="Compute type (whisperx only, default: from config)")
+    p_transcribe.add_argument("--model", default=None, help="Deepgram model name (default: from config)")
     p_transcribe.add_argument("--no-diarize", action="store_true", help="Skip speaker diarization")
     p_transcribe.add_argument("--force", action="store_true", help="Re-transcribe even if transcript exists")
     p_transcribe.set_defaults(func=cmd_transcribe)

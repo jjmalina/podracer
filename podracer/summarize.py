@@ -1,3 +1,5 @@
+import json
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -34,6 +36,7 @@ class Backend:
             model=model,
             api_key=api_key,
         )
+
 
 SPEAKER_ID_PROMPT = """\
 You are given a timestamped podcast transcript where speakers are labeled as \
@@ -167,7 +170,6 @@ def _extract_json(content: str) -> str:
 
 def _repair_truncated_json(content: str) -> str:
     """Try to close truncated JSON strings/arrays/objects."""
-    import json
     try:
         json.loads(content)
         return content
@@ -366,7 +368,6 @@ def rewrite_transcript(transcript: str, speakers: list[SpeakerIdentification]) -
 
 
 def _step(label: str, func, *args):
-    import time
     logger.info("[%s] starting...", label)
     start = time.time()
     result = func(*args)
