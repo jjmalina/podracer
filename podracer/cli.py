@@ -279,25 +279,31 @@ def cmd_transcribe(args):
         from podracer.transcribe import transcribe
     except (ImportError, AttributeError) as e:
         logger.error("Transcription dependencies not available: %s", e)
-        logger.error("This may be due to a torch/torchaudio version conflict with vLLM.")
         sys.exit(1)
 
     cfg = _config()
-    hf_token = None if args.no_diarize else cfg.hf_token
-    model = args.model or cfg.transcribe_model
-    device = args.device or cfg.transcribe_device
-    compute_type = args.compute_type or cfg.transcribe_compute_type
+    backend = args.backend or cfg.transcribe_backend
+    default_model = cfg.transcribe_deepgram_model if backend == "deepgram" else cfg.transcribe_whisperx_model
+    model = args.model or default_model
+    diarize = not args.no_diarize
 
-    logger.info("Transcribing: %s", episode.title)
+    if backend == "deepgram" and not cfg.deepgram_api_key:
+        logger.error("Deepgram backend requires DEEPGRAM_API_KEY (config, credentials, or env).")
+        sys.exit(1)
+
+    logger.info("Transcribing: %s (backend=%s, model=%s)", episode.title, backend, model)
     text = transcribe(
         audio_path,
-        model_size=model,
-        device=device,
-        compute_type=compute_type,
-        hf_token=hf_token,
+        backend=backend,
+        model=model,
+        device=args.device or cfg.transcribe_device,
+        compute_type=args.compute_type or cfg.transcribe_compute_type,
+        hf_token=cfg.hf_token if diarize else None,
+        deepgram_api_key=cfg.deepgram_api_key,
+        diarize=diarize,
     )
 
-    save_transcript(conn, episode.id, text, model)
+    save_transcript(conn, episode.id, text, f"{backend}:{model}")
 
     if args.json:
         saved = get_transcript(conn, episode.id)
@@ -416,20 +422,25 @@ def cmd_process(args):
             sys.exit(1)
 
         cfg = _config()
-        hf_token = cfg.hf_token
-        model = cfg.transcribe_model
-        device = cfg.transcribe_device
-        compute_type = cfg.transcribe_compute_type
+        tx_backend = cfg.transcribe_backend
+        model = cfg.transcribe_deepgram_model if tx_backend == "deepgram" else cfg.transcribe_whisperx_model
 
-        logger.info("Transcribing: %s", episode.title)
+        if tx_backend == "deepgram" and not cfg.deepgram_api_key:
+            logger.error("Deepgram backend requires DEEPGRAM_API_KEY.")
+            sys.exit(1)
+
+        logger.info("Transcribing: %s (backend=%s, model=%s)", episode.title, tx_backend, model)
         transcript_text = transcribe(
             audio_path,
-            model_size=model,
-            device=device,
-            compute_type=compute_type,
-            hf_token=hf_token,
+            backend=tx_backend,
+            model=model,
+            device=cfg.transcribe_device,
+            compute_type=cfg.transcribe_compute_type,
+            hf_token=cfg.hf_token,
+            deepgram_api_key=cfg.deepgram_api_key,
+            diarize=cfg.diarize,
         )
-        save_transcript(conn, episode.id, transcript_text, model)
+        save_transcript(conn, episode.id, transcript_text, f"{tx_backend}:{model}")
 
     # Summarize
     existing_summary = get_summary(conn, args.episode_id)
@@ -516,9 +527,12 @@ def main():
 
     p_transcribe = subparsers.add_parser("transcribe", help="Transcribe an episode")
     p_transcribe.add_argument("episode_id", type=int, help="Episode ID")
-    p_transcribe.add_argument("--model", default=None, help="Whisper model size (default: from config)")
-    p_transcribe.add_argument("--device", default=None, help="Device: cuda or cpu (default: from config)")
-    p_transcribe.add_argument("--compute-type", default=None, help="Compute type (default: from config)")
+    p_transcribe.add_argument("--backend", choices=["whisperx", "deepgram"], default=None,
+                              help="Transcription backend (default: from config)")
+    p_transcribe.add_argument("--model", default=None, help="Model name (default: from config)")
+    p_transcribe.add_argument("--device", default=None,
+                              help="Device: cuda or cpu (whisperx only)")
+    p_transcribe.add_argument("--compute-type", default=None, help="Compute type (whisperx only, default: from config)")
     p_transcribe.add_argument("--no-diarize", action="store_true", help="Skip speaker diarization")
     p_transcribe.add_argument("--force", action="store_true", help="Re-transcribe even if transcript exists")
     p_transcribe.set_defaults(func=cmd_transcribe)

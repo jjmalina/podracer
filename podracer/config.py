@@ -15,7 +15,9 @@ class Config:
     media_dir: str = "./data/media/"
 
     # Transcription
-    transcribe_model: str = "small"
+    transcribe_backend: str = "whisperx"
+    transcribe_whisperx_model: str = "small"
+    transcribe_deepgram_model: str = "nova-3"
     transcribe_device: str = "cuda"
     transcribe_compute_type: str = "float16"
     diarize: bool = True
@@ -28,6 +30,7 @@ class Config:
     # API keys
     hf_token: str | None = None
     openrouter_api_key: str | None = None
+    deepgram_api_key: str | None = None
     podcast_index_key: str | None = None
     podcast_index_secret: str | None = None
 
@@ -80,7 +83,9 @@ def load_config() -> Config:
         config.media_dir = general.get("media_dir", config.media_dir)
 
         transcribe = data.get("transcribe", {})
-        config.transcribe_model = transcribe.get("model", config.transcribe_model)
+        config.transcribe_backend = transcribe.get("backend", config.transcribe_backend)
+        config.transcribe_whisperx_model = transcribe.get("whisperx_model", config.transcribe_whisperx_model)
+        config.transcribe_deepgram_model = transcribe.get("deepgram_model", config.transcribe_deepgram_model)
         config.transcribe_device = transcribe.get("device", config.transcribe_device)
         config.transcribe_compute_type = transcribe.get("compute_type", config.transcribe_compute_type)
         config.diarize = transcribe.get("diarize", config.diarize)
@@ -93,6 +98,7 @@ def load_config() -> Config:
         keys = data.get("keys", {})
         config.hf_token = keys.get("hf_token")
         config.openrouter_api_key = keys.get("openrouter_api_key")
+        config.deepgram_api_key = keys.get("deepgram_api_key")
         config.podcast_index_key = keys.get("podcast_index_key")
         config.podcast_index_secret = keys.get("podcast_index_secret")
 
@@ -102,6 +108,8 @@ def load_config() -> Config:
         config.hf_token = _read_credential_file(root, "hf_token")
     if not config.openrouter_api_key:
         config.openrouter_api_key = _read_credential_file(root, "openrouter_token")
+    if not config.deepgram_api_key:
+        config.deepgram_api_key = _read_credential_file(root, "deepgram_token")
     if not config.podcast_index_key or not config.podcast_index_secret:
         pi = _read_kv_credential_file(root, "podcast_index")
         if not config.podcast_index_key:
@@ -113,6 +121,7 @@ def load_config() -> Config:
     config.media_dir = os.environ.get("PODRACER_MEDIA_DIR", config.media_dir)
     config.hf_token = os.environ.get("HF_TOKEN", config.hf_token)
     config.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY", config.openrouter_api_key)
+    config.deepgram_api_key = os.environ.get("DEEPGRAM_API_KEY", config.deepgram_api_key)
     config.podcast_index_key = os.environ.get("PODCAST_INDEX_KEY", config.podcast_index_key)
     config.podcast_index_secret = os.environ.get("PODCAST_INDEX_SECRET", config.podcast_index_secret)
 

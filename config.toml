@@ -3,9 +3,11 @@ db_path = "./data/podracer.db"
 media_dir = "./data/media/"
 
 [transcribe]
-model = "small"
-device = "cuda"
-compute_type = "float16"
+backend = "deepgram"           # "whisperx" (local GPU) or "deepgram" (cloud)
+whisperx_model = "small"       # tiny/base/small/medium/large
+deepgram_model = "nova-3"      # nova-3, nova-2, etc.
+device = "cuda"                # whisperx only
+compute_type = "float16"       # whisperx only
 diarize = true
 
 [summarize]
