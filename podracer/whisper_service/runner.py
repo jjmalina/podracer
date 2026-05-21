@@ -40,7 +40,7 @@ def load_align_model(language: str, device: str):
 
 def load_diarize_pipeline(hf_token: str, device: str):
     logger.info("Loading diarization pipeline")
-    return DiarizationPipeline(token=hf_token, device=device)
+    return DiarizationPipeline(use_auth_token=hf_token, device=device)
 
 
 def transcribe_audio(
