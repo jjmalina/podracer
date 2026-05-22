@@ -30,6 +30,7 @@
     });
     document.addEventListener('DOMContentLoaded', function() { applyTheme(getTheme()); });
   </script>
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
   <nav class="container">
@@ -39,6 +40,7 @@
     <ul>
       <li><a href="/podcasts">Podcasts</a></li>
       <li><a href="/search">Search</a></li>
+      <li><a href="/jobs">Jobs</a></li>
       <li><button id="theme-toggle" class="theme-btn" onclick="toggleTheme()"></button></li>
     </ul>
   </nav>

@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Jobs — podracer{% endblock %}
+{% block head_extra %}
+<meta http-equiv="refresh" content="10">
+{% endblock %}
+{% block content %}
+
+<h1>Jobs</h1>
+
+{% if flash %}
+  {% set parts = flash.split('-', 1) %}
+  {% if parts[0] == 'retried' %}
+    <p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">
+      Job {{ parts[1] }} retried.
+    </p>
+  {% elif parts[0] == 'cancelled' %}
+    <p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">
+      Job {{ parts[1] }} cancelled.
+    </p>
+  {% else %}
+    <p role="alert" style="background:#fff3cd;padding:0.5em 1em;border-left:4px solid #b58105">
+      {{ flash }}
+    </p>
+  {% endif %}
+{% endif %}
+
+<section>
+  <h2>Worker</h2>
+  <table>
+    <tbody>
+      <tr><td>Last sync</td><td>{{ last_sync or 'never' }}</td></tr>
+      <tr><td>Sync interval</td><td>{{ sync_interval_minutes }} min</td></tr>
+      <tr><td>Drain interval</td><td>{{ drain_interval_seconds }} sec</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Counts</h2>
+  <table>
+    <thead><tr><th>Status</th><th>Count</th></tr></thead>
+    <tbody>
+      <tr><td>queued</td><td>{{ counts.queued }}</td></tr>
+      <tr><td>running</td><td>{{ counts.running }}</td></tr>
+      <tr><td>done</td><td>{{ counts.done }}</td></tr>
+      <tr><td>failed</td><td>{{ counts.failed }}</td></tr>
+      <tr><td>blocked</td><td>{{ counts.blocked }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+{% if running %}
+<section>
+  <h2>Running</h2>
+  <table>
+    <thead><tr><th>Job</th><th>Kind</th><th>Episode</th><th>Started</th></tr></thead>
+    <tbody>
+      {% for j in running %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
+            <br><small>{{ j.podcast_title }}</small></td>
+        <td>{{ j.started_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if queued %}
+<section>
+  <h2>Queued ({{ counts.queued }})</h2>
+  <table>
+    <thead><tr><th>Job</th><th>Kind</th><th>Episode</th><th>Dep</th><th>Created</th><th></th></tr></thead>
+    <tbody>
+      {% for j in queued %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
+            <br><small>{{ j.podcast_title }}</small></td>
+        <td>{{ j.depends_on_job_id or '' }}</td>
+        <td>{{ j.created_at }}</td>
+        <td>
+          <form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;margin:0"
+                onsubmit="return confirm('Cancel job {{ j.id }} ({{ j.kind }})? Dependents will also be removed.');">
+            <button type="submit" class="secondary outline" style="padding:0.25em 0.5em;font-size:0.85em">Cancel</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if failed %}
+<section>
+  <h2>Failed</h2>
+  <table>
+    <thead><tr><th>Job</th><th>Kind</th><th>Episode</th><th>Attempts</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+      {% for j in failed %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
+            <br><small>{{ j.podcast_title }}</small></td>
+        <td>{{ j.attempts }}/{{ j.max_attempts }}</td>
+        <td><small style="font-family:monospace">{{ (j.last_error or '')[:120] }}</small></td>
+        <td>
+          <form method="post" action="/jobs/{{ j.id }}/retry" style="display:inline;margin:0">
+            <button type="submit" style="padding:0.25em 0.5em;font-size:0.85em">Retry</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if blocked %}
+<section>
+  <h2>Blocked</h2>
+  <p><small>Waiting on an upstream failed job. Retry the parent (transcribe) to unblock.</small></p>
+  <table>
+    <thead><tr><th>Job</th><th>Kind</th><th>Episode</th><th>Depends on</th><th></th></tr></thead>
+    <tbody>
+      {% for j in blocked %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a></td>
+        <td>job {{ j.depends_on_job_id }}</td>
+        <td>
+          <form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;margin:0"
+                onsubmit="return confirm('Cancel blocked job {{ j.id }}?');">
+            <button type="submit" class="secondary outline" style="padding:0.25em 0.5em;font-size:0.85em">Cancel</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if done %}
+<section>
+  <h2>Recently done</h2>
+  <table>
+    <thead><tr><th>Job</th><th>Kind</th><th>Episode</th><th>Finished</th></tr></thead>
+    <tbody>
+      {% for j in done %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
+            <br><small>{{ j.podcast_title }}</small></td>
+        <td>{{ j.finished_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}

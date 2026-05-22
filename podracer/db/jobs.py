@@ -203,6 +203,24 @@ def get_running_jobs(conn: sqlite3.Connection) -> list[Job]:
     return [_from_row(r) for r in rows]
 
 
+def get_queued_jobs(conn: sqlite3.Connection, limit: int = 20) -> list[Job]:
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE status = 'queued' "
+        "ORDER BY created_at LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_from_row(r) for r in rows]
+
+
+def get_done_jobs(conn: sqlite3.Connection, limit: int = 10) -> list[Job]:
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE status = 'done' "
+        "ORDER BY finished_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_from_row(r) for r in rows]
+
+
 def get_failed_jobs(conn: sqlite3.Connection, limit: int = 10) -> list[Job]:
     rows = conn.execute(
         "SELECT * FROM jobs WHERE status = 'failed' "
@@ -210,3 +228,72 @@ def get_failed_jobs(conn: sqlite3.Connection, limit: int = 10) -> list[Job]:
         (limit,),
     ).fetchall()
     return [_from_row(r) for r in rows]
+
+
+def get_blocked_jobs(conn: sqlite3.Connection, limit: int = 20) -> list[Job]:
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE status = 'blocked' ORDER BY id LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_from_row(r) for r in rows]
+
+
+def get_job(conn: sqlite3.Connection, job_id: int) -> Job | None:
+    row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return _from_row(row) if row else None
+
+
+def retry_job(conn: sqlite3.Connection, job_id: int) -> bool:
+    """Reset a failed job to queued. Also unblock any cascade-blocked
+    dependents so the chain has a chance to flow again. Returns True if
+    the job was failed and got requeued."""
+    row = conn.execute(
+        "SELECT status FROM jobs WHERE id = ?", (job_id,),
+    ).fetchone()
+    if not row or row["status"] != "failed":
+        return False
+    conn.execute(
+        "UPDATE jobs SET status='queued', attempts=0, last_error=NULL, "
+        "started_at=NULL, finished_at=NULL WHERE id = ?",
+        (job_id,),
+    )
+    # Unblock anything that depended on this job (transitively).
+    frontier = [job_id]
+    while frontier:
+        parent = frontier.pop()
+        deps = conn.execute(
+            "SELECT id FROM jobs WHERE depends_on_job_id = ? AND status = 'blocked'",
+            (parent,),
+        ).fetchall()
+        for d in deps:
+            conn.execute(
+                "UPDATE jobs SET status='queued', last_error=NULL WHERE id = ?",
+                (d["id"],),
+            )
+            frontier.append(d["id"])
+    conn.commit()
+    return True
+
+
+def cancel_job(conn: sqlite3.Connection, job_id: int) -> bool:
+    """Delete a queued job AND any dependents (which would orphan otherwise).
+    Returns True if anything was deleted."""
+    row = conn.execute(
+        "SELECT status FROM jobs WHERE id = ?", (job_id,),
+    ).fetchone()
+    if not row or row["status"] not in ("queued", "blocked"):
+        return False
+    to_delete = [job_id]
+    frontier = [job_id]
+    while frontier:
+        parent = frontier.pop()
+        deps = conn.execute(
+            "SELECT id FROM jobs WHERE depends_on_job_id = ?", (parent,),
+        ).fetchall()
+        for d in deps:
+            to_delete.append(d["id"])
+            frontier.append(d["id"])
+    placeholders = ",".join("?" * len(to_delete))
+    conn.execute(f"DELETE FROM jobs WHERE id IN ({placeholders})", to_delete)
+    conn.commit()
+    return True
