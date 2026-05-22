@@ -9,6 +9,7 @@ class Podcast(BaseModel):
     artwork_url: str | None = None
     description: str | None = None
     subscribed: bool = False
+    subscribed_at: str | None = None
     last_synced_at: str | None = None
     created_at: str | None = None
 
@@ -63,3 +64,17 @@ class FeedEpisode(BaseModel):
     duration_seconds: int | None = None
     description: str | None = None
     show_notes: str | None = None
+
+
+class Job(BaseModel):
+    id: int
+    episode_id: int
+    kind: str
+    status: str
+    depends_on_job_id: int | None = None
+    attempts: int = 0
+    max_attempts: int = 3
+    last_error: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
