@@ -487,7 +487,7 @@ WantedBy=default.target
 
 ### Why `%h/code/podracer` is hard-coded
 
-The current project lives at `/home/jeremiahmalina/code/podracer` and uses `./config.toml` and `./data/` resolved from CWD. Setting `WorkingDirectory` keeps that behavior intact. If we later make the install location configurable, the units become templates.
+The project assumes an editable checkout under `%h/code/podracer` with `./config.toml` and `./data/` resolved from CWD. Setting `WorkingDirectory` keeps that behavior intact. If we later make the install location configurable, the units become templates.
 
 ## Install / Setup
 
