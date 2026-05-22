@@ -11,6 +11,23 @@
   </p>
 </hgroup>
 
+{% if flash == "enqueued" %}
+<p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">Episode enqueued. The worker will pick it up on its next iteration.</p>
+{% elif flash == "already-queued" %}
+<p role="alert" style="background:#fff3cd;padding:0.5em 1em;border-left:4px solid #b58105">This episode already has an active job.</p>
+{% endif %}
+
+{% if active_job %}
+<p>Worker job in progress: <strong>{{ active_job.kind }}</strong> ({{ active_job.status }}).</p>
+{% elif not summary %}
+<form method="post" action="/episodes/{{ episode.id }}/enqueue" style="margin-bottom:1em"
+      onsubmit="return confirm('Enqueue this episode for transcription and summarization?\n\n{{ episode.title|replace('\n', ' ')|replace("'", "\\'") }}');">
+  <button type="submit">
+    {% if has_transcript %}Re-summarize this episode{% else %}Process this episode{% endif %}
+  </button>
+</form>
+{% endif %}
+
 {% if episode.description and not episode.show_notes %}
 <p>{{ episode.description }}</p>
 {% endif %}

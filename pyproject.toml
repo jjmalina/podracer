@@ -23,6 +23,11 @@ whisper = [
     "whisperx>=3.1.0",
 ]
 
+# Test runner + utilities. Install via `uv sync --extra dev`.
+dev = [
+    "pytest>=8",
+]
+
 [project.scripts]
 podracer = "podracer.cli:main"
 podracer-whisper = "podracer.whisper_service.__main__:main"
@@ -36,6 +41,11 @@ preview = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "PLC0415"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-q"
 
 [tool.ty.environment]
 python-version = "3.12"
