@@ -8,11 +8,41 @@ Podracer uses a layered config system. Each layer overrides the previous:
 4. **Environment variables**
 5. **CLI flags** (highest priority)
 
+## Where config lives
+
+`podracer` looks for `config.toml` in this order; first hit wins:
+
+1. `./config.toml` (current working directory) — in-repo dev override
+2. `~/.config/podracer/config.toml` (or `$XDG_CONFIG_HOME/podracer/...`) — daemon install
+3. Repo root via `__file__` — editable-install fallback
+
+This gives clean dev/daemon isolation: from the repo, you get the in-repo
+config; from anywhere else you get the XDG config the install script
+seeded.
+
+Paths inside the config (`db_path`, `media_dir`) are anchored at the
+**config file's directory**, not at the cwd. So `./data/podracer.db` in
+`/opt/podracer/config.toml` always resolves to
+`/opt/podracer/data/podracer.db`, regardless of where you invoke
+`podracer` from. Absolute paths pass through unchanged.
+
+The XDG config seeded by `scripts/install-systemd-user.sh` uses absolute
+paths under `~/.local/share/podracer/` so the daemon's data lives apart
+from the repo. For LXC-style deployments where code and data are on
+different volumes (e.g. `/opt/podracer/` + `/var/lib/podracer/`), use
+absolute paths in `config.toml` or set `PODRACER_DB` / `PODRACER_MEDIA_DIR`
+in the systemd unit.
+
+Credentials are looked up under `<config_dir>/.credentials/`, so a dev
+checkout reads from `<repo>/.credentials/` and the daemon reads from
+`~/.config/podracer/.credentials/`. The install script copies the dev
+credentials to the daemon location on first install.
+
 ## config.toml
 
 ```toml
 [general]
-db_path = "./data/podracer.db"
+db_path = "./data/podracer.db"      # resolved against config file's dir
 media_dir = "./data/media/"
 
 [transcribe]

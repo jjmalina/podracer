@@ -1,7 +1,6 @@
 import argparse
 import json
 import logging
-import os
 import sys
 
 import uvicorn
@@ -13,12 +12,16 @@ from podracer.db import (
     get_connection,
     get_episode,
     get_episodes,
+    get_failed_jobs,
+    get_job_counts,
     get_podcast,
+    get_running_jobs,
     get_subscribed_podcasts,
     get_summary,
     get_transcript,
+    get_worker_last_sync,
+    get_worker_watermark,
     init_db,
-    save_summary,
     save_transcript,
     subscribe,
     unsubscribe,
@@ -29,11 +32,17 @@ from podracer.db import (
 )
 from podracer.download import download_episode
 from podracer.feed import fetch_episodes, fetch_feed_metadata
+from podracer.process import (
+    process_episode,
+    queue_latest_unprocessed_episode,
+    summarize_episode,
+)
 from podracer.search import search_podcasts
-from podracer.summarize import Backend, PodcastSummary, summarize
+from podracer.summarize import PodcastSummary
 from podracer.summarize_cli import print_summary
 from podracer.transcribe import transcribe
 from podracer.web.app import create_app
+from podracer.worker import Worker
 
 _cfg: Config | None = None
 
@@ -98,10 +107,18 @@ def cmd_subscribe(args):
 
     count = _sync_episodes(conn, podcast_id, feed_url, limit=args.limit)
 
+    queued_episode_id = None
+    if not args.no_queue:
+        queued_episode_id = queue_latest_unprocessed_episode(conn, _config(), podcast_id)
+
     if args.json:
-        print(json.dumps({"id": podcast_id, "title": meta.title, "episodes": count}))
+        print(json.dumps({"id": podcast_id, "title": meta.title,
+                          "episodes": count, "queued_episode_id": queued_episode_id}))
     else:
-        print(f"Subscribed to: {meta.title} ({count} episodes synced)")
+        msg = f"Subscribed to: {meta.title} ({count} episodes synced)"
+        if queued_episode_id:
+            msg += f"; queued episode {queued_episode_id} for processing"
+        print(msg)
 
 
 def cmd_unsubscribe(args):
@@ -329,38 +346,20 @@ def cmd_summarize(args):
         if args.json:
             print(existing.data)
         else:
-            result = PodcastSummary.model_validate_json(existing.data)
-            print_summary(result)
+            print_summary(PodcastSummary.model_validate_json(existing.data))
         return
 
-    transcript = get_transcript(conn, args.episode_id)
-    if not transcript:
-        logger.error("No transcript for episode %s. Run `podracer transcribe %s` first.",
-                      args.episode_id, args.episode_id)
+    try:
+        result = summarize_episode(
+            conn, _config(), args.episode_id,
+            force=args.force, backend=args.backend, model=args.model,
+        )
+    except RuntimeError as e:
+        logger.error("%s", e)
         sys.exit(1)
 
-    cfg = _config()
-    backend_name = args.backend or cfg.summarize_backend
-    model = args.model or cfg.summarize_model
-    base_url = args.base_url or cfg.summarize_base_url
-
-    if backend_name == "openrouter":
-        api_key = cfg.openrouter_api_key
-        if not api_key:
-            logger.error("OpenRouter API key not configured. Set in config.toml, .credentials/, or env var.")
-            sys.exit(1)
-        backend = Backend.openrouter(model, api_key)
-    elif backend_name == "vllm":
-        backend = Backend.vllm(model, base_url or "http://localhost:8000")
-    else:
-        backend = Backend.ollama(model, base_url or "http://localhost:11434")
-
-    podcast = get_podcast(conn, episode.podcast_id)
-    logger.info("Summarizing: %s", episode.title)
-    result = summarize(transcript.text, backend=backend, show_notes=episode.show_notes,
-                       podcast_description=podcast.description if podcast else None)
-
-    save_summary(conn, episode.id, result.model_dump_json(), model, backend_name)
+    if result is None:
+        return
 
     if args.json:
         print(result.model_dump_json(indent=2))
@@ -385,85 +384,89 @@ def cmd_process(args):
         logger.error("Episode %s not found.", args.episode_id)
         sys.exit(1)
 
-    podcast = get_podcast(conn, episode.podcast_id)
-    if not podcast:
-        logger.error("Podcast not found for episode %s.", episode.id)
+    try:
+        result = process_episode(
+            conn, _config(), args.episode_id,
+            force=args.force, backend=args.backend, model=args.model,
+        )
+    except RuntimeError as e:
+        logger.error("%s", e)
         sys.exit(1)
 
-    # Download
-    media_dir = _config().media_dir
-    if not episode.local_path or episode.status == "pending":
-        logger.info("Downloading: %s", episode.title)
-        relative_path, size = download_episode(
-            episode.audio_url, media_dir, podcast.title, episode.title,
-        )
-        update_episode_download(conn, episode.id, relative_path, size)
-        audio_path = f"{media_dir}{relative_path}"
-    else:
-        audio_path = f"{media_dir}{episode.local_path}"
-        logger.info("Already downloaded: %s", audio_path)
-
-    # Transcribe
-    existing_transcript = get_transcript(conn, args.episode_id)
-    if existing_transcript and not args.force:
-        logger.info("Transcript exists, skipping. Use --force to redo.")
-        transcript_text = existing_transcript.text
-    else:
-        cfg = _config()
-        tx_backend = cfg.transcribe_backend
-        model = cfg.transcribe_deepgram_model
-
-        if tx_backend == "deepgram" and not cfg.deepgram_api_key:
-            logger.error("Deepgram backend requires DEEPGRAM_API_KEY.")
-            sys.exit(1)
-        if tx_backend == "whisperx-http" and not cfg.transcribe_service_url:
-            logger.error("whisperx-http backend requires transcribe.service_url in config.")
-            sys.exit(1)
-
-        logger.info("Transcribing: %s (backend=%s)", episode.title, tx_backend)
-        transcript_text = transcribe(
-            audio_path,
-            backend=tx_backend,
-            model=model,
-            deepgram_api_key=cfg.deepgram_api_key,
-            service_url=cfg.transcribe_service_url,
-            service_auth_token=cfg.transcribe_service_auth_token,
-            diarize=cfg.diarize,
-        )
-        model_tag = model if tx_backend == "deepgram" else cfg.transcribe_whisperx_model
-        save_transcript(conn, episode.id, transcript_text, f"{tx_backend}:{model_tag}")
-
-    # Summarize
-    existing_summary = get_summary(conn, args.episode_id)
-    if existing_summary and not args.force:
-        logger.info("Summary exists, skipping. Use --force to redo.")
-        result = PodcastSummary.model_validate_json(existing_summary.data)
-    else:
-        cfg = _config()
-        backend_name = args.backend or cfg.summarize_backend
-        model_name = args.model or cfg.summarize_model
-        base_url = args.base_url or cfg.summarize_base_url
-
-        if backend_name == "openrouter":
-            api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.openrouter_api_key
-            if not api_key:
-                logger.error("OPENROUTER_API_KEY not set.")
-                sys.exit(1)
-            backend = Backend.openrouter(model_name, api_key)
-        elif backend_name == "vllm":
-            backend = Backend.vllm(model_name, base_url or "http://localhost:8000")
+    if result is None:
+        # Skipped both stages because artifacts existed and --force wasn't passed.
+        existing = get_summary(conn, args.episode_id)
+        if existing:
+            result = PodcastSummary.model_validate_json(existing.data)
         else:
-            backend = Backend.ollama(model_name, base_url or "http://localhost:11434")
-
-        logger.info("Summarizing: %s", episode.title)
-        result = summarize(transcript_text, backend=backend, show_notes=episode.show_notes,
-                           podcast_description=podcast.description)
-        save_summary(conn, episode.id, result.model_dump_json(), model_name, backend_name)
+            return
 
     if args.json:
         print(result.model_dump_json(indent=2))
     else:
         print_summary(result)
+
+
+def cmd_worker(args):
+    cfg = _config()
+    conn = _db()
+    worker = Worker(conn, cfg)
+    if args.once:
+        worker.run_once()
+        return
+    worker.install_signal_handlers()
+    logger.info("worker starting (sync_interval=%dm, max_attempts=%d)",
+                cfg.sync_interval_minutes, cfg.max_attempts)
+    worker.run_forever()
+    logger.info("worker stopped")
+
+
+def cmd_status(args):
+    conn = _db()
+    cfg = _config()
+    counts = get_job_counts(conn)
+    last_sync = get_worker_last_sync(conn)
+    watermark = get_worker_watermark(conn)
+    running = get_running_jobs(conn)
+    failed = get_failed_jobs(conn, limit=5)
+    podcasts = len(get_subscribed_podcasts(conn))
+
+    if args.json:
+        payload = {
+            "worker": {
+                "last_sync": last_sync,
+                "watermark": watermark,
+                "sync_interval_minutes": cfg.sync_interval_minutes,
+            },
+            "jobs": counts,
+            "running": [j.model_dump() for j in running],
+            "failed": [j.model_dump() for j in failed],
+            "subscribed_podcasts": podcasts,
+        }
+        print(json.dumps(payload, indent=2))
+        return
+
+    print("Worker:")
+    print(f"  Last sync:      {last_sync or 'never'}")
+    print(f"  Watermark:      {watermark or 'unset'}")
+    print(f"  Sync interval:  {cfg.sync_interval_minutes} min")
+    print()
+    print("Jobs:")
+    for status_name in ("queued", "running", "done", "failed", "blocked"):
+        print(f"  {status_name:<10} {counts[status_name]}")
+    if running:
+        print()
+        print("Running:")
+        for j in running:
+            print(f"  job {j.id}: episode {j.episode_id} {j.kind} (started {j.started_at})")
+    if failed:
+        print()
+        print("Recent failures:")
+        for j in failed:
+            err = (j.last_error or "")[:80]
+            print(f"  job {j.id}: episode {j.episode_id} {j.kind} — {err}")
+    print()
+    print(f"Subscribed podcasts: {podcasts}")
 
 
 def main():
@@ -486,6 +489,8 @@ def main():
     p_subscribe = subparsers.add_parser("subscribe", help="Subscribe to a podcast via RSS URL")
     p_subscribe.add_argument("feed_url", help="RSS feed URL")
     p_subscribe.add_argument("--limit", type=int, default=10, help="Number of recent episodes to sync (default: 10)")
+    p_subscribe.add_argument("--no-queue", action="store_true",
+                             help="Don't auto-queue the latest episode for processing")
     p_subscribe.set_defaults(func=cmd_subscribe)
 
     p_unsubscribe = subparsers.add_parser("unsubscribe", help="Unsubscribe from a podcast")
@@ -546,6 +551,14 @@ def main():
     p_sync.add_argument("podcast_id", type=int, nargs="?", help="Podcast ID (omit to sync all subscriptions)")
     p_sync.add_argument("--limit", type=int, default=10, help="Number of recent episodes to sync (default: 10)")
     p_sync.set_defaults(func=cmd_sync)
+
+    p_worker = subparsers.add_parser("worker", help="Run the sync + processing worker")
+    p_worker.add_argument("--once", action="store_true",
+                          help="Run a single iteration and exit (for testing)")
+    p_worker.set_defaults(func=cmd_worker)
+
+    p_status = subparsers.add_parser("status", help="Show queue state for ops/debugging")
+    p_status.set_defaults(func=cmd_status)
 
     args = parser.parse_args()
     if args.verbose:

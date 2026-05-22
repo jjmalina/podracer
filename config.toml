@@ -3,7 +3,7 @@ db_path = "./data/podracer.db"
 media_dir = "./data/media/"
 
 [transcribe]
-backend = "whisperx-http"
+backend = "deepgram"
 deepgram_model = "nova-3"
 whisperx_model = "large-v3"
 device = "cuda"
@@ -19,6 +19,12 @@ service_url = "http://127.0.0.1:9000"
 [summarize]
 backend = "openrouter"
 model = "deepseek/deepseek-v4-flash"
+
+[daemon]
+sync_interval_minutes = 30
+drain_interval_seconds = 10
+max_attempts = 3
+retry_backoff_seconds = 300
 
 # API keys can go here or in .credentials/ files or env vars.
 # Priority: env vars > config.toml > .credentials/ files

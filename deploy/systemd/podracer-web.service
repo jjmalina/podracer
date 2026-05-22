@@ -1,0 +1,18 @@
+[Unit]
+Description=Podracer web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run from $HOME so cwd-relative lookup doesn't find the dev repo's config.toml.
+# podracer falls through to ~/.config/podracer/config.toml.
+WorkingDirectory=%h
+ExecStart=%h/code/podracer/.venv/bin/python -m podracer.cli serve --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

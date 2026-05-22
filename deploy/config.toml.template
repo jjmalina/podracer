@@ -1,0 +1,31 @@
+# Daemon config. Installed at ~/.config/podracer/config.toml by
+# scripts/install-systemd-user.sh. Edit to taste; the install script does
+# not overwrite an existing file.
+
+[general]
+db_path = "__HOME__/.local/share/podracer/podracer.db"
+media_dir = "__HOME__/.local/share/podracer/media/"
+
+[transcribe]
+backend = "deepgram"
+deepgram_model = "nova-3"
+diarize = true
+# To self-host instead:
+# backend = "whisperx-http"
+# service_url = "http://localhost:9000"
+
+[summarize]
+backend = "openrouter"
+model = "deepseek/deepseek-v4-flash"
+
+[daemon]
+sync_interval_minutes = 30       # how often to fetch RSS + enqueue new episodes
+drain_interval_seconds = 10      # how often to check the job queue (UI enqueues
+                                 # are picked up within this many seconds)
+max_attempts = 3
+retry_backoff_seconds = 300
+
+# API keys come from ~/.config/podracer/.credentials/{deepgram_token,
+# openrouter_token, hf_token} or env vars (DEEPGRAM_API_KEY,
+# OPENROUTER_API_KEY, HF_TOKEN). The install script copies any existing
+# credentials from the dev repo's .credentials/ on first install.

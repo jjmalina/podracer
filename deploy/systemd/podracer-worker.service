@@ -1,0 +1,20 @@
+[Unit]
+Description=Podracer sync + processing worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run from $HOME so cwd-relative lookup doesn't find the dev repo's config.toml.
+# podracer falls through to ~/.config/podracer/config.toml.
+WorkingDirectory=%h
+ExecStart=%h/code/podracer/.venv/bin/python -m podracer.cli worker
+Restart=on-failure
+RestartSec=30s
+# Allow long-running transcription/summarization to finish before SIGKILL
+TimeoutStopSec=600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

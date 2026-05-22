@@ -9,6 +9,16 @@ CONFIG_FILENAME = "config.toml"
 CREDENTIALS_DIR = ".credentials"
 
 
+def _xdg_config_home() -> Path:
+    env = os.environ.get("XDG_CONFIG_HOME")
+    return Path(env).expanduser() if env else Path.home() / ".config"
+
+
+def xdg_config_dir() -> Path:
+    """~/.config/podracer/ (or $XDG_CONFIG_HOME/podracer/)."""
+    return _xdg_config_home() / "podracer"
+
+
 @dataclass
 class Config:
     db_path: str = "./data/podracer.db"
@@ -33,6 +43,12 @@ class Config:
     summarize_backend: str = "openrouter"
     summarize_model: str = "deepseek/deepseek-v4-flash"
     summarize_base_url: str | None = None
+
+    # Daemon / worker
+    sync_interval_minutes: int = 30      # how often to fetch feeds + enqueue
+    drain_interval_seconds: int = 10     # how often to check the job queue
+    max_attempts: int = 3
+    retry_backoff_seconds: int = 300
 
     # API keys
     hf_token: str | None = None
@@ -68,11 +84,29 @@ def _read_kv_credential_file(project_root: Path, filename: str) -> dict[str, str
 
 
 def _find_config_file() -> Path | None:
-    for base in [Path.cwd(), Path(__file__).resolve().parent.parent]:
-        path = base / CONFIG_FILENAME
+    """Lookup order:
+       1. ./config.toml in cwd                  (in-repo dev override)
+       2. ~/.config/podracer/config.toml        (XDG / daemon install)
+       3. <repo_root>/config.toml via __file__  (editable-install fallback)
+    """
+    candidates = [
+        Path.cwd() / CONFIG_FILENAME,
+        xdg_config_dir() / CONFIG_FILENAME,
+        Path(__file__).resolve().parent.parent / CONFIG_FILENAME,
+    ]
+    for path in candidates:
         if path.exists():
             return path
     return None
+
+
+def _resolve_path(value: str, base: Path) -> str:
+    """Resolve a path string. Absolute paths pass through; relative paths
+    are anchored at `base` (the config file's directory)."""
+    p = Path(value)
+    if p.is_absolute():
+        return str(p)
+    return str((base / p).resolve())
 
 
 def load_config() -> Config:
@@ -113,6 +147,12 @@ def load_config() -> Config:
         config.summarize_model = summarize.get("model", config.summarize_model)
         config.summarize_base_url = summarize.get("base_url", config.summarize_base_url)
 
+        daemon = data.get("daemon", {})
+        config.sync_interval_minutes = daemon.get("sync_interval_minutes", config.sync_interval_minutes)
+        config.drain_interval_seconds = daemon.get("drain_interval_seconds", config.drain_interval_seconds)
+        config.max_attempts = daemon.get("max_attempts", config.max_attempts)
+        config.retry_backoff_seconds = daemon.get("retry_backoff_seconds", config.retry_backoff_seconds)
+
         keys = data.get("keys", {})
         config.hf_token = keys.get("hf_token")
         config.openrouter_api_key = keys.get("openrouter_api_key")
@@ -142,5 +182,13 @@ def load_config() -> Config:
     config.deepgram_api_key = os.environ.get("DEEPGRAM_API_KEY", config.deepgram_api_key)
     config.podcast_index_key = os.environ.get("PODCAST_INDEX_KEY", config.podcast_index_key)
     config.podcast_index_secret = os.environ.get("PODCAST_INDEX_SECRET", config.podcast_index_secret)
+
+    # Anchor relative db_path / media_dir against the config file's directory.
+    # Absolute paths pass through unchanged (deployment uses absolute paths in
+    # config.toml or via PODRACER_DB / PODRACER_MEDIA_DIR).
+    config.db_path = _resolve_path(config.db_path, config._project_root)
+    config.media_dir = _resolve_path(config.media_dir, config._project_root)
+    if not config.media_dir.endswith("/"):
+        config.media_dir += "/"
 
     return config

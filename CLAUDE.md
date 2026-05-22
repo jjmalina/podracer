@@ -14,6 +14,9 @@ Local-first podcast knowledge platform: ingest audio, transcribe, summarize, sea
 # Type check
 .venv/bin/ty check podracer/
 
+# Run tests (install with: uv sync --extra dev)
+.venv/bin/pytest
+
 # Run the CLI
 .venv/bin/python3 -m podracer.cli <command>
 
