@@ -29,16 +29,16 @@
 {% endif %}
 
 {% if episode.description and not episode.show_notes %}
-<p>{{ episode.description }}</p>
+<p>{{ episode.description | linkify }}</p>
 {% endif %}
 
 {% if episode.show_notes %}
 <section>
-  <details open>
-    <summary>Show Notes</summary>
+  <details open class="collapsible-section">
+    <summary class="section-heading">Show Notes</summary>
     {% for paragraph in episode.show_notes.split('\n') %}
     {% if paragraph.strip() %}
-    <p>{{ paragraph }}</p>
+    <p>{{ paragraph | linkify }}</p>
     {% endif %}
     {% endfor %}
   </details>
@@ -47,36 +47,134 @@
 
 {% if summary %}
 <section>
-  <h2>Speakers</h2>
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Role</th></tr>
-    </thead>
-    <tbody>
-      {% for s in summary.speakers if s.role.lower() != 'advertiser' %}
-      <tr><td>{{ s.name }}</td><td>{{ s.role }}</td></tr>
+  <details open class="collapsible-section">
+    <summary class="section-heading">Speakers</summary>
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        {% for s in summary.speakers if s.role.lower() != 'advertiser' %}
+        <tr><td>{{ s.name }}</td><td>{{ s.role }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+
+<section>
+  <details open class="collapsible-section">
+    <summary class="section-heading">Summary</summary>
+    {% for paragraph in summary.summary.split('\n\n') %}
+    <p>{{ paragraph }}</p>
+    {% endfor %}
+  </details>
+</section>
+
+{% if chapters_nested %}
+<section class="chapters">
+  <div class="chapters-header">
+    <h2>Chapters</h2>
+    <button type="button" class="chapters-toggle secondary outline" onclick="toggleAllChapters(this)">Collapse all</button>
+  </div>
+  <script>
+    function toggleAllChapters(btn) {
+      var chapters = document.querySelectorAll('.chapters .chapter');
+      var anyOpen = Array.prototype.some.call(chapters, function(c) { return c.open; });
+      chapters.forEach(function(c) { c.open = !anyOpen; });
+      btn.textContent = anyOpen ? 'Expand all' : 'Collapse all';
+    }
+  </script>
+
+  {% if pre_chapter.insights or pre_chapter.takes %}
+  <details open class="chapter">
+    <summary class="chapter-heading">
+      <span class="chapter-title">Intro</span>
+      <span class="chapter-ts">—</span>
+    </summary>
+    <div class="chapter-body">
+      {% if pre_chapter.insights %}
+      <h4 class="subsection-label">Insights</h4>
+      {% for ins in pre_chapter.insights %}
+      <div class="item">
+        <div class="item-meta"><span class="item-speaker">{{ ins.speaker }}</span> <span class="item-ts">{{ ins.timestamp }}</span></div>
+        <p>{{ ins.text }}</p>
+      </div>
       {% endfor %}
-    </tbody>
-  </table>
-</section>
+      {% endif %}
+      {% if pre_chapter.takes %}
+      <h4 class="subsection-label">Speaker takes</h4>
+      {% for take in pre_chapter.takes %}
+      <div class="item">
+        <div class="item-meta"><span class="item-speaker">{{ take.speaker }}</span> <span class="item-ts">{{ take.timestamp }}</span></div>
+        <p>{{ take.take }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
 
-<section>
-  <h2>Summary</h2>
-  {% for paragraph in summary.summary.split('\n\n') %}
-  <p>{{ paragraph }}</p>
+  {% for entry in chapters_nested %}
+  <details open class="chapter">
+    <summary class="chapter-heading">
+      <span class="chapter-title">{{ entry.chapter.title }}</span>
+      <span class="chapter-ts">{{ entry.chapter.timestamp }}</span>
+    </summary>
+    <div class="chapter-body">
+      <p class="chapter-summary">{{ entry.chapter.summary }}</p>
+      {% if entry.insights %}
+      <h4 class="subsection-label">Insights</h4>
+      {% for ins in entry.insights %}
+      <div class="item">
+        <div class="item-meta"><span class="item-speaker">{{ ins.speaker }}</span> <span class="item-ts">{{ ins.timestamp }}</span></div>
+        <p>{{ ins.text }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+      {% if entry.takes %}
+      <h4 class="subsection-label">Speaker takes</h4>
+      {% for take in entry.takes %}
+      <div class="item">
+        <div class="item-meta"><span class="item-speaker">{{ take.speaker }}</span> <span class="item-ts">{{ take.timestamp }}</span></div>
+        <p>{{ take.take }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </details>
   {% endfor %}
-</section>
 
-<section>
-  <h2>Chapters</h2>
-  {% for ch in summary.chapters %}
-  <article>
-    <header><strong>[{{ ch.timestamp }}] {{ ch.title }}</strong></header>
-    <p>{{ ch.summary }}</p>
-  </article>
-  {% endfor %}
+  {% if orphan.insights or orphan.takes %}
+  <details open class="chapter">
+    <summary class="chapter-heading">
+      <span class="chapter-title">Other</span>
+      <span class="chapter-ts">—</span>
+    </summary>
+    <div class="chapter-body">
+      {% if orphan.insights %}
+      <h4 class="subsection-label">Insights</h4>
+      {% for ins in orphan.insights %}
+      <div class="item">
+        <div class="item-meta"><span class="item-speaker">{{ ins.speaker }}</span> <span class="item-ts">{{ ins.timestamp }}</span></div>
+        <p>{{ ins.text }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+      {% if orphan.takes %}
+      <h4 class="subsection-label">Speaker takes</h4>
+      {% for take in orphan.takes %}
+      <div class="item">
+        <div class="item-meta"><span class="item-speaker">{{ take.speaker }}</span> <span class="item-ts">{{ take.timestamp }}</span></div>
+        <p>{{ take.take }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
 </section>
-
+{% else %}
 <section>
   <h2>Insights</h2>
   {% for ins in summary.insights %}
@@ -96,6 +194,7 @@
   </article>
   {% endfor %}
 </section>
+{% endif %}
 {% else %}
 <p>This episode has not been summarized yet.</p>
 {% endif %}

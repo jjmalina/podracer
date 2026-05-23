@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from podracer.config import Config, load_config
 from podracer.db import init_db
@@ -16,6 +18,37 @@ from podracer.web.routes.search import router as search_router
 WEB_DIR = Path(__file__).parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
+
+_URL_RE = re.compile(
+    r"(?:https?://|www\.)[^\s<>]+"
+    r"|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.[a-z]{2,24}/[^\s<>]+",
+    re.IGNORECASE,
+)
+_TRAILING_PUNCT = ".,;:!?)]>"
+
+
+def linkify(text: str | None) -> Markup:
+    """Escape `text` and wrap URLs (http(s)://, www., or domain.tld/path) in <a> tags."""
+    if not text:
+        return Markup("")
+    out: list = []
+    pos = 0
+    for m in _URL_RE.finditer(text):
+        out.append(escape(text[pos:m.start()]))
+        display = m.group(0)
+        trail = ""
+        while display and display[-1] in _TRAILING_PUNCT:
+            trail = display[-1] + trail
+            display = display[:-1]
+        href = display if display.lower().startswith(("http://", "https://")) else f"https://{display}"
+        out.append(Markup(
+            f'<a href="{escape(href)}" target="_blank" rel="noopener noreferrer">{escape(display)}</a>'
+        ))
+        if trail:
+            out.append(escape(trail))
+        pos = m.end()
+    out.append(escape(text[pos:]))
+    return Markup("".join(out))
 
 
 def create_app(cfg: Config) -> FastAPI:
@@ -35,6 +68,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     app = FastAPI(title="podracer", lifespan=lifespan)
     app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    app.state.templates.env.filters["linkify"] = linkify
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     app.include_router(podcasts_router)
