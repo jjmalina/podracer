@@ -1,3 +1,4 @@
+import html
 import sqlite3
 from pathlib import Path
 
@@ -109,6 +110,28 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "UPDATE podcasts SET subscribed_at = datetime('now') "
             "WHERE subscribed = 1 AND subscribed_at IS NULL"
         )
+
+    # Decode HTML entities in stored text fields. Earlier feed-ingest stripped
+    # tags but left entities (&amp;, &nbsp;) as literal characters. Idempotent:
+    # only updates rows where unescaping actually changes the value.
+    for table, col in (
+        ("episodes", "title"),
+        ("episodes", "description"),
+        ("episodes", "show_notes"),
+        ("podcasts", "title"),
+        ("podcasts", "description"),
+        ("podcasts", "author"),
+    ):
+        rows = conn.execute(
+            f"SELECT id, {col} FROM {table} WHERE {col} LIKE '%&%;%'"
+        ).fetchall()
+        for row in rows:
+            original = row[col]
+            decoded = html.unescape(original)
+            if decoded != original:
+                conn.execute(
+                    f"UPDATE {table} SET {col} = ? WHERE id = ?", (decoded, row["id"])
+                )
 
 
 def init_db(conn: sqlite3.Connection) -> None:
