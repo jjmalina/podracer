@@ -59,49 +59,6 @@ visually pick a show at a glance.
 
 ---
 
-## Nest insights + speaker takes under chapters
-
-**Problem.** The episode page renders chapters, insights, and speaker
-takes as three independent lists. Reading top-to-bottom you have to
-mentally cross-reference timestamps to figure out which insight came
-from which chapter. Nesting them gives you a "table of contents that
-expands into the good parts" — chapter heading, then the insights
-and speaker takes that fall inside that chapter's time window.
-
-**Sketch.**
-- No schema change. Existing `summary.chapters`, `summary.insights`,
-  `summary.speaker_takes` already have `timestamp` (`HH:MM:SS`) on each
-  item.
-- Do the binning in the route handler (`web/routes/episodes.py`), not in
-  the template — Jinja for this would be unreadable. Build a
-  `chapters_nested` list of dicts:
-  ```python
-  for i, ch in enumerate(summary.chapters):
-      start = ch.timestamp
-      end = summary.chapters[i + 1].timestamp if i + 1 < len(summary.chapters) else "99:99:99"
-      ch_insights = [x for x in summary.insights if start <= x.timestamp < end]
-      ch_takes    = [x for x in summary.speaker_takes if start <= x.timestamp < end]
-      chapters_nested.append({"chapter": ch, "insights": ch_insights, "takes": ch_takes})
-  ```
-  String comparison works because the format is fixed-width `HH:MM:SS`.
-- Template (`templates/episodes/detail.html`): replace the three
-  separate `<section>`s with a single "Chapters" section that loops
-  over `chapters_nested`. Per entry: chapter heading + summary, then
-  small indented blocks for insights and speaker takes (or
-  `<details>` collapsibles if any chapter is heavy).
-- Edge cases:
-  - Insights/takes with timestamps before the first chapter (rare —
-    intro before chapter 1): collect into a pre-chapter bucket
-    rendered above the first chapter.
-  - Insights/takes outside any chapter range (LLM hallucinated
-    timestamp): drop into a fallback "Other" section at the end so
-    they're visible but not lost.
-- Stretch: a small "↻" link by each chapter that scrolls to it via
-  anchor — useful once the audio player feature lands (chapter
-  timestamps become clickable jump points).
-
----
-
 ## Per-podcast custom summarization instructions
 
 **Problem.** The summarization prompts are one-size-fits-all: every
@@ -1055,3 +1012,179 @@ archive — turns each summary into a real artifact you can pass around.
   episode title, `og:description` with the first paragraph of the
   summary, `og:image` with the podcast artwork. Cheap and makes the
   link feel like a polished artifact, not just a JSON dump.
+
+---
+
+## GitHub Actions CI
+
+**Problem.** The repo is public and the test suite + lint + typecheck
+have been keeping things honest, but right now they only run when I
+remember to invoke them locally. A regression slipped into `main`
+would land silently. CI moves that from "discipline" to "guarantee".
+
+**Sketch.**
+- Single workflow `.github/workflows/ci.yml`, triggers on
+  `pull_request` and `push: branches: [main]`.
+- Matrix on Python (start with `3.12`; expand to `3.10` / `3.11` /
+  `3.13` if anything actually exercises version-specific code).
+- Steps:
+  1. Checkout
+  2. Install `uv` via the official action (`astral-sh/setup-uv@v3`)
+  3. `uv sync --extra dev` — slim install, no `whisper` extra. Tests
+     mock external calls so torch/whisperx aren't needed.
+  4. `uv run ruff check podracer/ tests/`
+  5. `uv run ty check podracer/ tests/`
+  6. `uv run pytest`
+- Cache: `setup-uv` handles the package cache automatically. Builds
+  should land in <30 s after the first run.
+- Required-checks branch protection on `main`: PRs can't merge until
+  CI passes. (Optional now since you're solo on the repo, but cheap
+  insurance for the day a contributor PRs in.)
+- Add a status badge to `README.md`: a small `![CI](…/badge.svg)`
+  next to the title.
+
+**Stretch.**
+- Separate job that runs `uv sync --extra whisper --extra dev` on
+  ubuntu-cuda (or just ubuntu, since the whisper service imports work
+  without a GPU at module load time — only `whisper.load_model`
+  needs CUDA). Catches torch/whisperx ABI drift without needing real
+  inference.
+- A nightly job that runs the full pipeline against a fixed 30-second
+  audio fixture via the cloud backends (Deepgram + OpenRouter). Costs
+  ~$0.02/run; catches API contract drift before users hit it. Gated
+  by `if: github.event_name == 'schedule'`.
+- Auto-deploy on green main: a separate workflow that SSHes into the
+  homelab LXC and runs `ansible-playbook playbooks/podracer.yml`.
+  Requires an SSH key as a GitHub secret. Cheap to add once the
+  homelab Ansible role exists.
+
+---
+
+## Public demo instance
+
+**Problem.** The README says what podracer does; a live demo would
+let a curious visitor see it in 30 seconds. A read-only public
+instance, seeded with a handful of well-known podcasts, makes the
+project actually shareable — links to it can go in HN comments, blog
+posts, the GitHub repo header, etc.
+
+**Sketch.**
+- Separate deploy from the private homelab one — different DB,
+  different config, different domain. Could live on a small VPS
+  (Hetzner CX11, Vultr $5 box) or as a second LXC behind a public
+  reverse proxy (Cloudflare Tunnel from the homelab works without
+  exposing your home IP).
+- Seed content: 5–10 episodes across 2–3 well-known podcasts that
+  don't mind being indexed — Lex Fridman, Huberman, Dwarkesh, Odd
+  Lots, EconTalk. Pre-processed once, then locked down (no worker
+  running). Total cost: ~$10 of Deepgram + OpenRouter for the seed.
+- Lockdown mode: a new `[demo] read_only = true` config flag that
+  - disables `POST /search/subscribe`, `POST /episodes/*/enqueue`,
+    `POST /episodes/*/chat` (or stubs them with a friendly "this is
+    a demo, fork the repo to run your own" message)
+  - hides the `/jobs` admin page
+  - removes the "process this episode" button from the template
+- Banner: a small "This is the podracer demo. Fork
+  [github.com/jjmalina/podracer](https://github.com/jjmalina/podracer)
+  to run your own instance." across the top of every page when
+  `read_only = true`.
+- Auth: none. LAN-trust doesn't apply to the internet, so the public
+  read-only API (entry #10) lives behind the same flag — GETs work
+  for anyone, POSTs return 403 unless authenticated as the demo
+  admin.
+- Updates: the demo doesn't run the worker. Refresh is manual —
+  occasionally re-run the seed script to add new episodes. Keeps the
+  cost bounded and removes the "what if the demo accidentally
+  transcribes my whole archive at 3 AM" failure mode.
+- Stretch — a "try it on your own podcast" form: paste an RSS URL,
+  process exactly one episode against a quota'd Deepgram +
+  OpenRouter budget, display the result. More compelling than
+  pre-seeded content but adds real cost and abuse-surface (rate
+  limits, captchas, etc.). Defer until the basic read-only demo is
+  out.
+
+**Open questions.**
+- Cost ceiling: the demo should have a hard monthly cap on cloud
+  spend (e.g. $5). Easiest: don't run any LLM/transcription calls
+  at all — all the demo's content is pre-baked and immutable. Save
+  the "try on your podcast" flow for v2.
+- Domain: subdomain of an existing one (`podracer.jjcloud.net` is
+  already taken by the private instance — maybe `demo.podracer.dev`
+  or just `podracer.example.com`).
+- Trust signal: link from the public demo to the GitHub repo
+  (already covered by the banner) plus a clear "do not enter
+  personal data" note since chat would be off anyway.
+
+---
+
+## Interactive installer
+
+**Problem.** `scripts/setup.sh` is one-shot and non-interactive: it
+runs apt + uv + symlinks, then dumps a banner telling you to drop
+API keys in `.credentials/`. Fine for someone who already knows the
+project; bad first impression for a fresh user who cloned the repo
+and just wants something working in five minutes. An interactive
+mode picks up where the headless mode leaves off — prompts for the
+two API keys, lets you pick backends, and (optionally) installs the
+daemon.
+
+**Sketch.**
+
+- Add a `--interactive` flag (or detect a TTY automatically) on
+  `scripts/setup.sh`. Headless behavior stays the default for the
+  Ansible-driven LXC deploy — no prompts there.
+- Walk the user through, with sensible defaults the user can take by
+  hitting Enter:
+
+  ```
+  1. Transcription backend:
+     [1] Deepgram (cloud — recommended, no GPU)
+     [2] Whisperx-http (self-hosted, needs an NVIDIA GPU)
+     Choice [1]: _
+
+  2. Summarization backend:
+     [1] OpenRouter (cloud — recommended)
+     [2] Ollama (local, must be already running)
+     [3] vLLM (local, must be already running)
+     Choice [1]: _
+
+  3. Deepgram API key (from https://console.deepgram.com/, blank to skip): _
+  4. OpenRouter API key (from https://openrouter.ai/keys, blank to skip): _
+
+  5. Install as a systemd --user service so it runs in the background? [y/N]: _
+
+  6. Subscribe to a podcast to test? (paste an RSS feed URL, blank to skip): _
+  ```
+- After answers:
+  - Writes `config.toml` (or `~/.config/podracer/config.toml` if
+    `--daemon` was chosen) with the chosen backends.
+  - Writes any provided keys to `.credentials/{deepgram_token,
+    openrouter_token}` with `chmod 600`.
+  - If "install daemon" was yes, calls
+    `scripts/install-systemd-user.sh`.
+  - If a feed URL was given, runs `podracer subscribe <url>` so the
+    user sees something happen immediately. With auto-queue (already
+    landed), the latest episode starts processing within ~10 seconds.
+  - Prints a final "open http://localhost:8080" line.
+- All prompts use `read -p` / `read -s` (for keys) — pure bash, no
+  Python TUI library required.
+- Validate inputs as you go: empty key → skip + warn; bogus URL →
+  re-prompt; can't subscribe → continue with a note.
+
+**Tests.**
+- Expect script via `expect(1)` or python `pexpect` to drive a
+  scripted run end-to-end against a fresh container. Confirms the
+  banner, the prompt order, and that the final state matches
+  (config file + symlinks + systemd units, if requested).
+- Not gating CI on this initially — interactive flows are flaky to
+  test. Document it as a manual smoke test before tagging a release.
+
+**Stretch.**
+- A Python TUI version (Textual / questionary) for the same flow.
+  Prettier, supports arrow-key selection. Adds a dependency for what
+  is otherwise a pure-bash script — only worth it if installs grow
+  to enough steps that the bash version starts feeling clunky.
+- "Doctor" subcommand — `podracer doctor` — that checks an existing
+  install: are credentials present? Does Deepgram return 200 on a
+  trivial probe? Is OpenRouter reachable? Is the venv healthy?
+  Catches misconfigurations after the fact.
