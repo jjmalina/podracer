@@ -13,6 +13,8 @@
 
 {% if flash == "enqueued" %}
 <p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">Episode enqueued. The worker will pick it up on its next iteration.</p>
+{% elif flash == "resummarizing" %}
+<p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">Existing summary cleared and re-summarize enqueued. Refresh in a minute.</p>
 {% elif flash == "already-queued" %}
 <p role="alert" style="background:#fff3cd;padding:0.5em 1em;border-left:4px solid #b58105">This episode already has an active job.</p>
 {% endif %}
@@ -25,6 +27,11 @@
   <button type="submit">
     {% if has_transcript %}Re-summarize this episode{% else %}Process this episode{% endif %}
   </button>
+</form>
+{% else %}
+<form method="post" action="/episodes/{{ episode.id }}/resummarize" style="margin-bottom:1em"
+      onsubmit="return confirm('Discard the existing summary and re-summarize from the transcript?\n\n{{ episode.title|replace('\n', ' ')|replace("'", "\\'") }}');">
+  <button type="submit" class="secondary outline btn-small">Re-summarize</button>
 </form>
 {% endif %}
 
@@ -122,7 +129,9 @@
       <span class="chapter-ts">{{ entry.chapter.timestamp }}</span>
     </summary>
     <div class="chapter-body">
-      <p class="chapter-summary">{{ entry.chapter.summary }}</p>
+      {% for para in entry.chapter.summary.split('\n\n') if para.strip() %}
+      <p class="chapter-summary">{{ para }}</p>
+      {% endfor %}
       {% if entry.insights %}
       <h4 class="subsection-label">Insights</h4>
       {% for ins in entry.insights %}

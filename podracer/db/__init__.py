@@ -53,6 +53,7 @@ from podracer.db.podcasts import (
     upsert_podcast,
 )
 from podracer.db.summaries import (
+    delete_summary,
     get_summary,
     save_summary,
 )
@@ -74,7 +75,7 @@ __all__ = [
     # transcripts
     "save_transcript", "get_transcript",
     # summaries
-    "save_summary", "get_summary",
+    "save_summary", "get_summary", "delete_summary",
     # jobs / watermark
     "WATERMARK_KEY", "LAST_SYNC_KEY",
     "init_worker_watermark", "get_worker_watermark", "set_worker_watermark",

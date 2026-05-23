@@ -33,3 +33,13 @@ def get_summary(conn: sqlite3.Connection, episode_id: int) -> SummaryRecord | No
         "SELECT * FROM summaries WHERE episode_id = ?", (episode_id,),
     ).fetchone()
     return _from_row(row) if row else None
+
+
+def delete_summary(conn: sqlite3.Connection, episode_id: int) -> bool:
+    cur = conn.execute("DELETE FROM summaries WHERE episode_id = ?", (episode_id,))
+    conn.execute(
+        "UPDATE episodes SET status = 'transcribed' WHERE id = ? AND status = 'summarized'",
+        (episode_id,),
+    )
+    conn.commit()
+    return cur.rowcount > 0

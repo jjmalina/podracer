@@ -1,5 +1,7 @@
 import json
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
@@ -11,6 +13,7 @@ from podracer import logger
 DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 131072
 DEFAULT_MAX_TOKENS = 16384
+CHAPTER_DETAIL_WORKERS = 5
 
 
 @dataclass
@@ -86,6 +89,36 @@ a short descriptive title, the timestamp (HH:MM:SS) where it begins, and a 1-2 \
 sentence summary. Use real speaker names from the speaker key. Cover the entire \
 episode from start to finish — do not skip any major section. \
 Skip advertisement and sponsor segments — do not create chapters for ads."""
+
+CHAPTER_DETAIL_PROMPT = """\
+You are writing a detailed summary of ONE chapter of a podcast for a reader \
+who hasn't listened. You will be given:
+- The chapter title
+- The speaker key for the episode
+- The transcript segment for just this chapter
+
+Write a substantive summary (typically 2-4 short paragraphs, 150-300 words) \
+that explains what was discussed in enough depth that the reader learns \
+something. Not "they talked about X" — actually convey the substance of X. \
+Use \\n\\n between paragraphs.
+
+Definitional asides: when speakers reference a technical concept, named \
+entity, or piece of shared context that they don't fully explain, you may \
+add a brief definition (1-2 clauses) drawing on your background knowledge. \
+Phrase these asides so the reader can tell what the speakers said versus \
+what you're explaining — e.g. "X is Y, ..." or "(X here refers to Y)" \
+rather than putting the explanation in the speaker's mouth. If you aren't \
+confident in a definition, omit it — let the speakers' words stand.
+
+Do not invent quantitative claims (numbers, dates, prices, benchmarks, \
+named studies, direct quotes) that aren't in the transcript.
+
+If this chapter is genuinely short on substance — an intro greeting, a brief \
+tangent — a 1-2 sentence summary is fine. Don't pad.
+
+Use real speaker names from the speaker key. Synthesize in your own \
+words — do not quote the transcript verbatim. Return only the summary \
+prose — no title, no timestamp."""
 
 INSIGHTS_PROMPT = """\
 You are a podcast analyst. You will be given a speaker key followed by a \
@@ -376,6 +409,63 @@ def _step(label: str, func, *args):
     return result
 
 
+_TS_RE = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]")
+
+
+def _slice_transcript_by_chapter(named_transcript: str, start_ts: str, end_ts: str) -> str:
+    """Return transcript lines whose [HH:MM:SS] timestamp falls in [start_ts, end_ts)."""
+    kept: list[str] = []
+    for line in named_transcript.splitlines():
+        m = _TS_RE.match(line)
+        if not m:
+            continue
+        ts = m.group(1)
+        if start_ts <= ts < end_ts:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def _enrich_one_chapter(backend: Backend, speaker_key: str, chapter: "Chapter", slice_text: str) -> str:
+    user = (
+        f"CHAPTER TITLE: {chapter.title}\n\n"
+        f"{speaker_key}\n\n"
+        f"TRANSCRIPT SEGMENT FOR THIS CHAPTER:\n{slice_text}"
+    )
+    content = _chat(backend, CHAPTER_DETAIL_PROMPT, user, Summary.model_json_schema())
+    return Summary.model_validate_json(content).summary
+
+
+def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
+                    speakers: list[SpeakerIdentification], backend: Backend) -> list["Chapter"]:
+    """Replace each chapter's summary with a substantive per-chapter writeup.
+
+    Fans out one LLM call per chapter via a thread pool (calls are HTTP I/O bound).
+    Falls back to the original short summary if a per-chapter call fails.
+    """
+    if not chapters:
+        return chapters
+    speaker_key = format_speaker_key(speakers)
+    sentinel = "99:99:99"
+
+    def task(i: int) -> tuple[int, str]:
+        start = chapters[i].timestamp
+        end = chapters[i + 1].timestamp if i + 1 < len(chapters) else sentinel
+        slice_text = _slice_transcript_by_chapter(named_transcript, start, end)
+        if not slice_text:
+            return i, chapters[i].summary
+        try:
+            return i, _enrich_one_chapter(backend, speaker_key, chapters[i], slice_text)
+        except Exception as e:
+            logger.warning("chapter %d enrichment failed (%s); keeping short summary", i, e)
+            return i, chapters[i].summary
+
+    workers = min(CHAPTER_DETAIL_WORKERS, len(chapters))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for i, new_summary in ex.map(task, range(len(chapters))):
+            chapters[i].summary = new_summary
+    return chapters
+
+
 def summarize(transcript: str, backend: Backend | None = None,
               show_notes: str | None = None,
               podcast_description: str | None = None) -> PodcastSummary:
@@ -403,6 +493,8 @@ def summarize(transcript: str, backend: Backend | None = None,
         ChapterList.model_json_schema(),
     )
     chapters = ChapterList.model_validate_json(chapters_content).chapters
+
+    chapters = _step("chapter_detail", enrich_chapters, chapters, named_transcript, speakers, backend)
 
     insights_content = _step(
         "insights", _chat,

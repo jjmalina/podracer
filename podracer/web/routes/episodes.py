@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from podracer.db import (
+    delete_summary,
     enqueue_episode_pipeline,
     get_episode,
     get_podcast,
@@ -154,3 +155,24 @@ def enqueue_episode(request: Request, episode_id: int):
     result = enqueue_episode_pipeline(db, episode_id, max_attempts=cfg.max_attempts)
     flash = "enqueued" if result else "already-queued"
     return RedirectResponse(url=f"/episodes/{episode_id}?flash={flash}", status_code=303)
+
+
+@router.post("/episodes/{episode_id}/resummarize")
+def resummarize_episode(request: Request, episode_id: int):
+    db = request.app.state.db
+    cfg = request.app.state.cfg
+    episode = get_episode(db, episode_id)
+    if not episode:
+        return RedirectResponse(url="/", status_code=303)
+
+    active = db.execute(
+        "SELECT id FROM jobs WHERE episode_id = ? "
+        "AND status IN ('queued', 'running') ORDER BY id LIMIT 1",
+        (episode_id,),
+    ).fetchone()
+    if active:
+        return RedirectResponse(url=f"/episodes/{episode_id}?flash=already-queued", status_code=303)
+
+    delete_summary(db, episode_id)
+    enqueue_episode_pipeline(db, episode_id, max_attempts=cfg.max_attempts)
+    return RedirectResponse(url=f"/episodes/{episode_id}?flash=resummarizing", status_code=303)

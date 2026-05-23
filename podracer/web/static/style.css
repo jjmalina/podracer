@@ -68,7 +68,8 @@ summary.section-heading::before {
   margin-bottom: 1rem;
 }
 .chapters-header h2 { margin: 0; }
-.chapters-toggle {
+.chapters-toggle,
+.btn-small {
   font-size: 0.8rem;
   padding: 0.3rem 0.75rem;
   width: auto;
