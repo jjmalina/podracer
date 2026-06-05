@@ -53,6 +53,16 @@
 {% endif %}
 
 {% if summary %}
+{% macro highlight_item(h) %}
+<div class="item">
+  <div class="item-meta">
+    <span class="item-speaker">{{ h.speaker }}</span>
+    <span class="item-kind item-kind-{{ h.kind }}">{{ h.kind }}</span>
+    <span class="item-ts">{{ h.timestamp }}</span>
+  </div>
+  <p>{{ h.text }}</p>
+</div>
+{% endmacro %}
 <section>
   <details open class="collapsible-section">
     <summary class="section-heading">Speakers</summary>
@@ -93,31 +103,15 @@
     }
   </script>
 
-  {% if pre_chapter.insights or pre_chapter.takes %}
+  {% if pre_chapter.highlights %}
   <details open class="chapter">
     <summary class="chapter-heading">
       <span class="chapter-title">Intro</span>
       <span class="chapter-ts">—</span>
     </summary>
     <div class="chapter-body">
-      {% if pre_chapter.insights %}
-      <h4 class="subsection-label">Insights</h4>
-      {% for ins in pre_chapter.insights %}
-      <div class="item">
-        <div class="item-meta"><span class="item-speaker">{{ ins.speaker }}</span> <span class="item-ts">{{ ins.timestamp }}</span></div>
-        <p>{{ ins.text }}</p>
-      </div>
-      {% endfor %}
-      {% endif %}
-      {% if pre_chapter.takes %}
-      <h4 class="subsection-label">Speaker takes</h4>
-      {% for take in pre_chapter.takes %}
-      <div class="item">
-        <div class="item-meta"><span class="item-speaker">{{ take.speaker }}</span> <span class="item-ts">{{ take.timestamp }}</span></div>
-        <p>{{ take.take }}</p>
-      </div>
-      {% endfor %}
-      {% endif %}
+      <h4 class="subsection-label">Highlights</h4>
+      {% for h in pre_chapter.highlights %}{{ highlight_item(h) }}{% endfor %}
     </div>
   </details>
   {% endif %}
@@ -132,74 +126,34 @@
       {% for para in entry.chapter.summary.split('\n\n') if para.strip() %}
       <p class="chapter-summary">{{ para }}</p>
       {% endfor %}
-      {% if entry.insights %}
-      <h4 class="subsection-label">Insights</h4>
-      {% for ins in entry.insights %}
-      <div class="item">
-        <div class="item-meta"><span class="item-speaker">{{ ins.speaker }}</span> <span class="item-ts">{{ ins.timestamp }}</span></div>
-        <p>{{ ins.text }}</p>
-      </div>
-      {% endfor %}
-      {% endif %}
-      {% if entry.takes %}
-      <h4 class="subsection-label">Speaker takes</h4>
-      {% for take in entry.takes %}
-      <div class="item">
-        <div class="item-meta"><span class="item-speaker">{{ take.speaker }}</span> <span class="item-ts">{{ take.timestamp }}</span></div>
-        <p>{{ take.take }}</p>
-      </div>
-      {% endfor %}
+      {% if entry.highlights %}
+      <h4 class="subsection-label">Highlights</h4>
+      {% for h in entry.highlights %}{{ highlight_item(h) }}{% endfor %}
       {% endif %}
     </div>
   </details>
   {% endfor %}
 
-  {% if orphan.insights or orphan.takes %}
+  {% if orphan.highlights %}
   <details open class="chapter">
     <summary class="chapter-heading">
       <span class="chapter-title">Other</span>
       <span class="chapter-ts">—</span>
     </summary>
     <div class="chapter-body">
-      {% if orphan.insights %}
-      <h4 class="subsection-label">Insights</h4>
-      {% for ins in orphan.insights %}
-      <div class="item">
-        <div class="item-meta"><span class="item-speaker">{{ ins.speaker }}</span> <span class="item-ts">{{ ins.timestamp }}</span></div>
-        <p>{{ ins.text }}</p>
-      </div>
-      {% endfor %}
-      {% endif %}
-      {% if orphan.takes %}
-      <h4 class="subsection-label">Speaker takes</h4>
-      {% for take in orphan.takes %}
-      <div class="item">
-        <div class="item-meta"><span class="item-speaker">{{ take.speaker }}</span> <span class="item-ts">{{ take.timestamp }}</span></div>
-        <p>{{ take.take }}</p>
-      </div>
-      {% endfor %}
-      {% endif %}
+      <h4 class="subsection-label">Highlights</h4>
+      {% for h in orphan.highlights %}{{ highlight_item(h) }}{% endfor %}
     </div>
   </details>
   {% endif %}
 </section>
 {% else %}
 <section>
-  <h2>Insights</h2>
-  {% for ins in summary.insights %}
+  <h2>Highlights</h2>
+  {% for h in highlights %}
   <article>
-    <header><strong>[{{ ins.timestamp }}]</strong> {{ ins.speaker }}</header>
-    <p>{{ ins.text }}</p>
-  </article>
-  {% endfor %}
-</section>
-
-<section>
-  <h2>Speaker Takes</h2>
-  {% for take in summary.speaker_takes %}
-  <article>
-    <header><strong>[{{ take.timestamp }}]</strong> {{ take.speaker }}</header>
-    <p>{{ take.take }}</p>
+    <header><strong>[{{ h.timestamp }}]</strong> {{ h.speaker }} · {{ h.kind }}</header>
+    <p>{{ h.text }}</p>
   </article>
   {% endfor %}
 </section>

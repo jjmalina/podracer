@@ -30,18 +30,11 @@ def print_summary(result: PodcastSummary) -> None:
         print(f"  {ch.summary}")
 
     print("\n" + "=" * 60)
-    print("INSIGHTS")
+    print("HIGHLIGHTS")
     print("=" * 60)
-    for ins in result.insights:
-        print(f"\n[{ins.timestamp}] ({ins.speaker})")
-        print(f"  {ins.text}")
-
-    print("\n" + "=" * 60)
-    print("SPEAKER TAKES")
-    print("=" * 60)
-    for take in result.speaker_takes:
-        print(f"\n[{take.timestamp}] {take.speaker}:")
-        print(f"  {take.take}")
+    for h in result.effective_highlights():
+        print(f"\n[{h.timestamp}] {h.speaker} ({h.kind})")
+        print(f"  {h.text}")
 
 
 def main():

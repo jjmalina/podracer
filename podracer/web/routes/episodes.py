@@ -11,12 +11,11 @@ from podracer.db import (
     get_summary,
     get_transcript,
 )
-from podracer.summarize import Chapter, Insight, PodcastSummary, SpeakerIdentification, SpeakerTake
+from podracer.summarize import Chapter, Highlight, PodcastSummary, SpeakerIdentification
 
 
 class ChapterBucket(TypedDict):
-    insights: list[Insight]
-    takes: list[SpeakerTake]
+    highlights: list[Highlight]
 
 
 class ChapterEntry(ChapterBucket):
@@ -48,13 +47,13 @@ def _format_duration(seconds: int | None) -> str:
 
 
 def _empty_bucket() -> ChapterBucket:
-    return {"insights": [], "takes": []}
+    return {"highlights": []}
 
 
 def _nest_under_chapters(
     summary: PodcastSummary,
 ) -> tuple[list[ChapterEntry] | None, ChapterBucket, ChapterBucket]:
-    """Bin insights and speaker takes into chapter windows.
+    """Bin highlights into chapter windows.
 
     Returns (chapters_nested, pre_chapter, orphan). chapters_nested is
     None when the summary has no chapters — the caller should fall back
@@ -64,32 +63,25 @@ def _nest_under_chapters(
     if not chapters:
         return None, _empty_bucket(), _empty_bucket()
 
+    highlights = sorted(summary.effective_highlights(), key=lambda h: h.timestamp)
     first_ts = chapters[0].timestamp
     pre_chapter: ChapterBucket = {
-        "insights": [x for x in summary.insights if x.timestamp < first_ts],
-        "takes": [x for x in summary.speaker_takes if x.timestamp < first_ts],
+        "highlights": [x for x in highlights if x.timestamp < first_ts],
     }
 
     nested: list[ChapterEntry] = []
-    placed_insights: set[int] = set()
-    placed_takes: set[int] = set()
+    placed: set[int] = set()
     for i, ch in enumerate(chapters):
         start = ch.timestamp
         end = chapters[i + 1].timestamp if i + 1 < len(chapters) else _END_SENTINEL
-        ch_insights = [x for x in summary.insights if start <= x.timestamp < end]
-        ch_takes = [x for x in summary.speaker_takes if start <= x.timestamp < end]
-        placed_insights.update(id(x) for x in ch_insights)
-        placed_takes.update(id(x) for x in ch_takes)
-        nested.append({"chapter": ch, "insights": ch_insights, "takes": ch_takes})
+        ch_highlights = [x for x in highlights if start <= x.timestamp < end]
+        placed.update(id(x) for x in ch_highlights)
+        nested.append({"chapter": ch, "highlights": ch_highlights})
 
     orphan: ChapterBucket = {
-        "insights": [
-            x for x in summary.insights
-            if x.timestamp >= first_ts and id(x) not in placed_insights
-        ],
-        "takes": [
-            x for x in summary.speaker_takes
-            if x.timestamp >= first_ts and id(x) not in placed_takes
+        "highlights": [
+            x for x in highlights
+            if x.timestamp >= first_ts and id(x) not in placed
         ],
     }
 
@@ -108,6 +100,7 @@ def episode_detail(request: Request, episode_id: int):
     podcast = get_podcast(db, episode.podcast_id)
 
     summary = None
+    highlights: list[Highlight] = []
     chapters_nested: list[ChapterEntry] | None = None
     pre_chapter: ChapterBucket = _empty_bucket()
     orphan: ChapterBucket = _empty_bucket()
@@ -116,8 +109,7 @@ def episode_detail(request: Request, episode_id: int):
         try:
             summary = PodcastSummary.model_validate_json(record.data)
             summary.speakers = [s for s in summary.speakers if not _is_ad_speaker(s)]
-            summary.insights.sort(key=lambda i: i.timestamp)
-            summary.speaker_takes.sort(key=lambda t: t.timestamp)
+            highlights = sorted(summary.effective_highlights(), key=lambda h: h.timestamp)
             chapters_nested, pre_chapter, orphan = _nest_under_chapters(summary)
         except Exception:
             pass
@@ -134,6 +126,7 @@ def episode_detail(request: Request, episode_id: int):
         "episode": episode,
         "podcast": podcast,
         "summary": summary,
+        "highlights": highlights,
         "chapters_nested": chapters_nested,
         "pre_chapter": pre_chapter,
         "orphan": orphan,

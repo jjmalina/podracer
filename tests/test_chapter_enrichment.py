@@ -1,5 +1,5 @@
 """Tests for the per-chapter transcript slicing used by enrich_chapters."""
-from podracer.summarize import _slice_transcript_by_chapter
+from podracer.summarize import Chapter, _is_teaser_chapter, _slice_transcript_by_chapter
 
 TRANSCRIPT = """\
 [00:00:10] [Host] welcome
@@ -44,3 +44,11 @@ def test_slice_with_sentinel_end_catches_tail():
 def test_slice_empty_when_no_lines_in_window():
     out = _slice_transcript_by_chapter(TRANSCRIPT, "00:20:00", "00:25:00")
     assert out == ""
+
+
+def test_teaser_chapters_are_detected():
+    # A teaser/cold-open chapter is skipped during enrichment so its montage of
+    # clips-from-later isn't inflated into detail that duplicates real chapters.
+    assert _is_teaser_chapter(Chapter(title="Teaser", timestamp="00:00:00", summary=""))
+    assert _is_teaser_chapter(Chapter(title="Cold Open", timestamp="00:00:00", summary=""))
+    assert not _is_teaser_chapter(Chapter(title="AI IPO Season", timestamp="00:02:00", summary=""))

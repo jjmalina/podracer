@@ -88,7 +88,15 @@ Aim for 10-20 chapters that reflect natural topic transitions. Each chapter need
 a short descriptive title, the timestamp (HH:MM:SS) where it begins, and a 1-2 \
 sentence summary. Use real speaker names from the speaker key. Cover the entire \
 episode from start to finish — do not skip any major section. \
-Skip advertisement and sponsor segments — do not create chapters for ads."""
+Skip advertisement and sponsor segments — do not create chapters for ads.
+
+Some episodes open with a teaser or cold-open montage: a rapid sequence of \
+short clips pulled from later in the episode, played before the show formally \
+begins. If you detect one, represent the ENTIRE teaser as a single chapter \
+titled exactly "Teaser" at its starting timestamp. Do not create separate \
+topic chapters for the clips inside the teaser — those topics get their own \
+chapters where they are actually discussed later, and duplicating them here \
+would misrepresent where each topic was covered."""
 
 CHAPTER_DETAIL_PROMPT = """\
 You are writing a detailed summary of ONE chapter of a podcast for a reader \
@@ -120,23 +128,21 @@ Use real speaker names from the speaker key. Synthesize in your own \
 words — do not quote the transcript verbatim. Return only the summary \
 prose — no title, no timestamp."""
 
-INSIGHTS_PROMPT = """\
+HIGHLIGHTS_PROMPT = """\
 You are a podcast analyst. You will be given a speaker key followed by a \
-timestamped transcript. Extract the key insights and takeaways — things a \
-listener would want to remember or act on. For each insight, provide the text \
-of the insight, the timestamp (HH:MM:SS) where it appears, and the real name \
-of the speaker who expressed it (using the speaker key). Aim for 10-15 insights \
-covering the full episode from start to finish. \
-Ignore advertisement and sponsor segments entirely."""
+timestamped transcript. Extract the episode's highlights — the points a \
+listener would want to remember. Each highlight is one of two kinds:
+- "takeaway": a key fact, finding, or actionable point from the discussion.
+- "opinion": a distinct opinion, thesis, or argument specific to one \
+speaker — their particular perspective rather than group consensus.
 
-SPEAKER_TAKES_PROMPT = """\
-You are a podcast analyst. You will be given a speaker key followed by a \
-timestamped transcript. Identify unique opinions, theses, or takes that are \
-specific to individual speakers — things that represent their distinct \
-perspective rather than group consensus. For each take, provide the speaker's \
-real name (using the speaker key), what they argued or claimed, and the \
-timestamp (HH:MM:SS). Aim for 10-15 takes covering the full episode and \
-all major speakers. Ignore advertisement and sponsor segments entirely."""
+For each highlight provide: the text, the kind (exactly "takeaway" or \
+"opinion"), the timestamp (HH:MM:SS) where it appears, and the real name of \
+the speaker who expressed it (using the speaker key). Do not record the same \
+point twice — if something is both a notable takeaway and a speaker's opinion, \
+pick the single kind that fits best and list it once. Aim for 15-25 highlights \
+covering the full episode from start to finish, across all major speakers. \
+Ignore advertisement and sponsor segments entirely."""
 
 
 class SpeakerIdentification(BaseModel):
@@ -165,14 +171,23 @@ class ChapterList(BaseModel):
     chapters: list[Chapter]
 
 
+class Highlight(BaseModel):
+    text: str
+    timestamp: str
+    speaker: str
+    kind: str  # "takeaway" or "opinion"
+
+
+class HighlightList(BaseModel):
+    highlights: list[Highlight]
+
+
+# Legacy item models — retained so summaries stored before the insights/takes
+# consolidation still deserialize. New summaries populate `highlights` instead.
 class Insight(BaseModel):
     text: str
     timestamp: str
     speaker: str
-
-
-class InsightList(BaseModel):
-    insights: list[Insight]
 
 
 class SpeakerTake(BaseModel):
@@ -181,16 +196,28 @@ class SpeakerTake(BaseModel):
     timestamp: str
 
 
-class SpeakerTakeList(BaseModel):
-    speaker_takes: list[SpeakerTake]
-
-
 class PodcastSummary(BaseModel):
     summary: str
     speakers: list[SpeakerIdentification]
     chapters: list[Chapter]
-    insights: list[Insight]
-    speaker_takes: list[SpeakerTake]
+    highlights: list[Highlight] = []
+    # Legacy fields, retained for reading pre-consolidation summaries.
+    insights: list[Insight] = []
+    speaker_takes: list[SpeakerTake] = []
+
+    def effective_highlights(self) -> list[Highlight]:
+        """Highlights to display, migrating legacy insights/takes on read."""
+        if self.highlights:
+            return self.highlights
+        merged = [
+            Highlight(text=i.text, timestamp=i.timestamp, speaker=i.speaker, kind="takeaway")
+            for i in self.insights
+        ]
+        merged += [
+            Highlight(text=t.take, timestamp=t.timestamp, speaker=t.speaker, kind="opinion")
+            for t in self.speaker_takes
+        ]
+        return merged
 
 
 def _extract_json(content: str) -> str:
@@ -425,6 +452,14 @@ def _slice_transcript_by_chapter(named_transcript: str, start_ts: str, end_ts: s
     return "\n".join(kept)
 
 
+def _is_teaser_chapter(chapter: "Chapter") -> bool:
+    """A cold-open/teaser chapter splices clips from later in the episode, so
+    its slice is a montage. Enriching it would inflate those brief clips into
+    detail that duplicates the chapters where the topics are actually covered."""
+    title = chapter.title.lower()
+    return "teaser" in title or "cold open" in title or "cold-open" in title
+
+
 def _enrich_one_chapter(backend: Backend, speaker_key: str, chapter: "Chapter", slice_text: str) -> str:
     user = (
         f"CHAPTER TITLE: {chapter.title}\n\n"
@@ -448,6 +483,8 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
     sentinel = "99:99:99"
 
     def task(i: int) -> tuple[int, str]:
+        if _is_teaser_chapter(chapters[i]):
+            return i, chapters[i].summary
         start = chapters[i].timestamp
         end = chapters[i + 1].timestamp if i + 1 < len(chapters) else sentinel
         slice_text = _slice_transcript_by_chapter(named_transcript, start, end)
@@ -496,26 +533,17 @@ def summarize(transcript: str, backend: Backend | None = None,
 
     chapters = _step("chapter_detail", enrich_chapters, chapters, named_transcript, speakers, backend)
 
-    insights_content = _step(
-        "insights", _chat,
-        backend, INSIGHTS_PROMPT,
-        f"Extract insights from this transcript:\n\n{notes_prefix}{named_transcript}",
-        InsightList.model_json_schema(),
+    highlights_content = _step(
+        "highlights", _chat,
+        backend, HIGHLIGHTS_PROMPT,
+        f"Extract highlights from this transcript:\n\n{notes_prefix}{named_transcript}",
+        HighlightList.model_json_schema(),
     )
-    insights = InsightList.model_validate_json(insights_content).insights
-
-    takes_content = _step(
-        "speaker_takes", _chat,
-        backend, SPEAKER_TAKES_PROMPT,
-        f"Extract unique speaker takes from this transcript:\n\n{notes_prefix}{named_transcript}",
-        SpeakerTakeList.model_json_schema(),
-    )
-    speaker_takes = SpeakerTakeList.model_validate_json(takes_content).speaker_takes
+    highlights = HighlightList.model_validate_json(highlights_content).highlights
 
     return PodcastSummary(
         summary=summary,
         speakers=speakers,
         chapters=chapters,
-        insights=insights,
-        speaker_takes=speaker_takes,
+        highlights=highlights,
     )

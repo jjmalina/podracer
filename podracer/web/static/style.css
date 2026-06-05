@@ -137,4 +137,16 @@ summary.section-heading::before {
   color: var(--pico-muted-color);
   margin-left: 0.4rem;
 }
+.item-kind {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.6rem;
+  margin-left: 0.4rem;
+  vertical-align: 0.05rem;
+}
+.item-kind-takeaway { background: #e3effb; color: #1c5d99; }
+.item-kind-opinion { background: #f3e9fb; color: #6b3fa0; }
 .item p { margin: 0; }
