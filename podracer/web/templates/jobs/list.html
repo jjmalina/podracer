@@ -5,22 +5,17 @@
 {% endblock %}
 {% block content %}
 
+<p class="eyebrow">Pipeline</p>
 <h1>Jobs</h1>
 
 {% if flash %}
   {% set parts = flash.split('-', 1) %}
   {% if parts[0] == 'retried' %}
-    <p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">
-      Job {{ parts[1] }} retried.
-    </p>
+    <p role="alert" class="flash">Job {{ parts[1] }} retried.</p>
   {% elif parts[0] == 'cancelled' %}
-    <p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">
-      Job {{ parts[1] }} cancelled.
-    </p>
+    <p role="alert" class="flash">Job {{ parts[1] }} cancelled.</p>
   {% else %}
-    <p role="alert" style="background:#fff3cd;padding:0.5em 1em;border-left:4px solid #b58105">
-      {{ flash }}
-    </p>
+    <p role="alert" class="flash flash-warn">{{ flash }}</p>
   {% endif %}
 {% endif %}
 
@@ -57,11 +52,11 @@
     <tbody>
       {% for j in running %}
       <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.id }}</td>
+        <td class="mono">{{ j.kind }}</td>
         <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
             <br><small>{{ j.podcast_title }}</small></td>
-        <td>{{ j.started_at }}</td>
+        <td class="mono">{{ j.started_at }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -77,16 +72,16 @@
     <tbody>
       {% for j in queued %}
       <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.id }}</td>
+        <td class="mono">{{ j.kind }}</td>
         <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
             <br><small>{{ j.podcast_title }}</small></td>
-        <td>{{ j.depends_on_job_id or '' }}</td>
-        <td>{{ j.created_at }}</td>
+        <td class="mono">{{ j.depends_on_job_id or '' }}</td>
+        <td class="mono">{{ j.created_at }}</td>
         <td>
           <form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;margin:0"
                 onsubmit="return confirm('Cancel job {{ j.id }} ({{ j.kind }})? Dependents will also be removed.');">
-            <button type="submit" class="secondary outline" style="padding:0.25em 0.5em;font-size:0.85em">Cancel</button>
+            <button type="submit" class="secondary btn-small">Cancel</button>
           </form>
         </td>
       </tr>
@@ -104,15 +99,15 @@
     <tbody>
       {% for j in failed %}
       <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.id }}</td>
+        <td class="mono">{{ j.kind }}</td>
         <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
             <br><small>{{ j.podcast_title }}</small></td>
-        <td>{{ j.attempts }}/{{ j.max_attempts }}</td>
-        <td><small style="font-family:monospace">{{ (j.last_error or '')[:120] }}</small></td>
+        <td class="mono">{{ j.attempts }}/{{ j.max_attempts }}</td>
+        <td><small class="job-error">{{ (j.last_error or '')[:120] }}</small></td>
         <td>
           <form method="post" action="/jobs/{{ j.id }}/retry" style="display:inline;margin:0">
-            <button type="submit" style="padding:0.25em 0.5em;font-size:0.85em">Retry</button>
+            <button type="submit" class="btn-small">Retry</button>
           </form>
         </td>
       </tr>
@@ -131,14 +126,14 @@
     <tbody>
       {% for j in blocked %}
       <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.id }}</td>
+        <td class="mono">{{ j.kind }}</td>
         <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a></td>
-        <td>job {{ j.depends_on_job_id }}</td>
+        <td class="mono">job {{ j.depends_on_job_id }}</td>
         <td>
           <form method="post" action="/jobs/{{ j.id }}/cancel" style="display:inline;margin:0"
                 onsubmit="return confirm('Cancel blocked job {{ j.id }}?');">
-            <button type="submit" class="secondary outline" style="padding:0.25em 0.5em;font-size:0.85em">Cancel</button>
+            <button type="submit" class="secondary btn-small">Cancel</button>
           </form>
         </td>
       </tr>
@@ -156,11 +151,11 @@
     <tbody>
       {% for j in done %}
       <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.id }}</td>
+        <td class="mono">{{ j.kind }}</td>
         <td><a href="/episodes/{{ j.episode_id }}">{{ j.episode_title }}</a>
             <br><small>{{ j.podcast_title }}</small></td>
-        <td>{{ j.finished_at }}</td>
+        <td class="mono">{{ j.finished_at }}</td>
       </tr>
       {% endfor %}
     </tbody>

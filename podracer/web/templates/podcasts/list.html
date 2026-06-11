@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Podcasts — podracer{% endblock %}
 {% block content %}
+<p class="eyebrow">Library</p>
 <h1>Podcasts</h1>
 {% if podcasts %}
 <form method="post" action="/podcasts/sync-all" style="display:inline">

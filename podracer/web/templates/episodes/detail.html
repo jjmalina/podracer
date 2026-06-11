@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ episode.title }} — podracer{% endblock %}
 {% block content %}
+<p class="eyebrow">Episode</p>
 <hgroup>
   <h1>{{ episode.title }}</h1>
   <p>
@@ -12,11 +13,11 @@
 </hgroup>
 
 {% if flash == "enqueued" %}
-<p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">Episode enqueued. The worker will pick it up on its next iteration.</p>
+<p role="alert" class="flash">Episode enqueued. The worker will pick it up on its next iteration.</p>
 {% elif flash == "resummarizing" %}
-<p role="alert" style="background:#dff2e1;padding:0.5em 1em;border-left:4px solid #2a9d4a">Existing summary cleared and re-summarize enqueued. Refresh in a minute.</p>
+<p role="alert" class="flash">Existing summary cleared and re-summarize enqueued. Refresh in a minute.</p>
 {% elif flash == "already-queued" %}
-<p role="alert" style="background:#fff3cd;padding:0.5em 1em;border-left:4px solid #b58105">This episode already has an active job.</p>
+<p role="alert" class="flash flash-warn">This episode already has an active job.</p>
 {% endif %}
 
 {% if active_job %}

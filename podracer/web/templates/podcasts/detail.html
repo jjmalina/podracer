@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ podcast.title }} — podracer{% endblock %}
 {% block content %}
+<p class="eyebrow">Podcast</p>
 <hgroup>
   <h1>{{ podcast.title }}</h1>
   <p>{{ podcast.author or "" }}{% if podcast.subscribed %} · <span class="badge badge-sub">Subscribed</span>{% endif %}</p>
@@ -44,8 +45,8 @@
   <tbody>
     {% for ep in episodes %}
     <tr>
-      <td>{{ (ep.published_at or "")[:10] }}</td>
-      <td>{{ format_duration(ep.duration_seconds) }}</td>
+      <td class="mono">{{ (ep.published_at or "")[:10] }}</td>
+      <td class="mono">{{ format_duration(ep.duration_seconds) }}</td>
       <td><span class="badge badge-{{ ep.status }}">{{ ep.status }}</span></td>
       <td><a href="/episodes/{{ ep.id }}">{{ ep.title }}</a></td>
     </tr>
