@@ -57,10 +57,15 @@ def podcast_unsubscribe(request: Request, podcast_id: int, db: sqlite3.Connectio
 
 def _sync_feed(db, podcast_id: int, feed_url: str) -> int:
     episodes = fetch_episodes(feed_url)
-    for ep in episodes:
-        upsert_episode(db, podcast_id, ep)
-    db.commit()
-    update_podcast_synced(db, podcast_id)
+    try:
+        for ep in episodes:
+            upsert_episode(db, podcast_id, ep)
+        # One transaction: update_podcast_synced commits the upserts and the
+        # last_synced_at bump together.
+        update_podcast_synced(db, podcast_id)
+    except Exception:
+        db.rollback()
+        raise
     return len(episodes)
 
 

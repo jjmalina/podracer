@@ -91,10 +91,14 @@ class Worker:
                 episodes = fetch_episodes(podcast.feed_url, limit=10)
                 for ep in episodes:
                     upsert_episode(self.conn, podcast.id, ep)
-                self.conn.commit()
+                # One transaction per podcast: update_podcast_synced commits
+                # the upserts and the last_synced_at bump together.
                 update_podcast_synced(self.conn, podcast.id)
                 logger.info("synced %s (%d episodes)", podcast.title, len(episodes))
             except Exception:
+                # Drop any partial batch — without this, pending upserts would
+                # ride along in whatever commit happens next on this connection.
+                self.conn.rollback()
                 logger.exception("feed sync failed: %s", podcast.title)
         set_worker_last_sync(self.conn, _utcnow_iso())
 

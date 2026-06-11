@@ -23,18 +23,14 @@ priority within each section. Check items off / delete them as they land.
   loopback hosts before fetching. Same check applies to the subscribe
   path.
 
-- [ ] **Atomic artifact save + status update** — `db/summaries.py` and
-  `db/transcripts.py` write the artifact, update `episodes.status`, and
-  re-query the ID as separate statements. A crash in between leaves
-  status drifted from reality. Fix: wrap in one transaction; return the
-  ID from the insert (`RETURNING` or `cursor.lastrowid`) instead of
-  re-querying.
-
-- [ ] **Worker feed-sync commit ordering** — `worker.py` (~line 90): if
-  episode upserts succeed but `update_podcast_synced` fails, the
-  watermark doesn't advance and the same episodes are re-fetched next
-  cycle. Fix: commit per-podcast only after the watermark update
-  succeeds; treat each podcast's sync as one transaction.
+- [x] **Worker feed-sync transaction boundaries** — `_sync_feeds`'s
+  except block didn't roll back, so a mid-batch failure left partial
+  upserts pending on the worker's shared connection, silently committed
+  later by unrelated commits. Fixed: one transaction per podcast,
+  rollback on failure (same shape applied to the web UI's `_sync_feed`).
+  (The original "watermark doesn't advance → duplicate ingestion" claim
+  was overstated: `last_synced_at` is display-only and upserts are
+  idempotent.)
 
 - [ ] **Timing-safe token compare in whisper service** —
   `whisper_service/routes.py:28` uses `token != state.auth_token`.
@@ -71,6 +67,17 @@ priority within each section. Check items off / delete them as they land.
   `Retry-After` on 429.
 
 ## Low priority
+
+- [ ] **Explicit transactions + `RETURNING` in artifact saves** —
+  `save_summary`/`save_transcript`/`delete_summary` pair the artifact
+  write with the episode-status update; they're atomic today, but only
+  via Python's implicit-transaction default (`isolation_level`), whose
+  semantics are version-dependent and silently lost if a caller enables
+  `autocommit`. Make the transaction explicit (`with conn:`) and return
+  the row ID via `RETURNING` instead of the post-commit re-query.
+  (Downgraded from high priority 2026-06-10 after re-review: the
+  original "crash leaves status drifted" claim was wrong — the implicit
+  transaction already covers both writes.)
 
 - [ ] **Parameterize `LIMIT`** — `db/episodes.py:31` builds
   `LIMIT {int(limit)}` via f-string. Safe due to the `int()` cast, but
