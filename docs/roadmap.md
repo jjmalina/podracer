@@ -1017,35 +1017,12 @@ archive — turns each summary into a real artifact you can pass around.
 
 ---
 
-## GitHub Actions CI
+## GitHub Actions CI — remaining stretch items
 
-**Problem.** The repo is public and the test suite + lint + typecheck
-have been keeping things honest, but right now they only run when I
-remember to invoke them locally. A regression slipped into `main`
-would land silently. CI moves that from "discipline" to "guarantee".
+The base workflow shipped (2026-06-10): `.github/workflows/ci.yml` runs
+ruff + ty + pytest via uv (slim install) on every PR and push to main,
+and main has required-checks branch protection. Still open:
 
-**Sketch.**
-- Single workflow `.github/workflows/ci.yml`, triggers on
-  `pull_request` and `push: branches: [main]`.
-- Matrix on Python (start with `3.12`; expand to `3.10` / `3.11` /
-  `3.13` if anything actually exercises version-specific code).
-- Steps:
-  1. Checkout
-  2. Install `uv` via the official action (`astral-sh/setup-uv@v3`)
-  3. `uv sync --extra dev` — slim install, no `whisper` extra. Tests
-     mock external calls so torch/whisperx aren't needed.
-  4. `uv run ruff check podracer/ tests/`
-  5. `uv run ty check podracer/ tests/`
-  6. `uv run pytest`
-- Cache: `setup-uv` handles the package cache automatically. Builds
-  should land in <30 s after the first run.
-- Required-checks branch protection on `main`: PRs can't merge until
-  CI passes. (Optional now since you're solo on the repo, but cheap
-  insurance for the day a contributor PRs in.)
-- Add a status badge to `README.md`: a small `![CI](…/badge.svg)`
-  next to the title.
-
-**Stretch.**
 - Separate job that runs `uv sync --extra whisper --extra dev` on
   ubuntu-cuda (or just ubuntu, since the whisper service imports work
   without a GPU at module load time — only `whisper.load_model`

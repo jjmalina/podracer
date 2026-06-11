@@ -1,5 +1,7 @@
 # podracer
 
+[![CI](https://github.com/jjmalina/podracer/actions/workflows/ci.yml/badge.svg)](https://github.com/jjmalina/podracer/actions/workflows/ci.yml)
+
 Local-first podcast knowledge platform. Subscribes to RSS feeds, downloads
 episodes, transcribes them with speaker diarization, and summarizes them
 with an LLM. Browse the result in a local web UI or query the SQLite
