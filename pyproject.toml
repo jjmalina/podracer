@@ -25,9 +25,11 @@ whisper = [
     "whisperx>=3.1.0",
 ]
 
-# Test runner + utilities. Install via `uv sync --extra dev`.
+# Test runner + lint/typecheck tools. Install via `uv sync --extra dev`.
 dev = [
     "pytest>=8",
+    "ruff>=0.8",
+    "ty",
 ]
 
 [project.scripts]
@@ -56,6 +58,9 @@ python-version = "3.12"
 include = ["podracer/whisper_service/runner.py"]
 
 [tool.ty.overrides.rules]
+# torch/whisperx only exist on the GPU host (whisper extra); slim
+# installs (CI, CPU-only deploys) can't resolve those imports.
+unresolved-import = "ignore"
 invalid-assignment = "ignore"
 unknown-argument = "ignore"
 
