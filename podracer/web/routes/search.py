@@ -7,7 +7,7 @@ from podracer.db import subscribe, update_podcast_synced, upsert_episode, upsert
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.process import queue_latest_unprocessed_episode
 from podracer.search import search_podcasts
-from podracer.web.deps import get_db
+from podracer.web.deps import get_db, validate_external_url
 
 router = APIRouter(prefix="/search")
 
@@ -41,6 +41,7 @@ def search_results(request: Request, q: str = ""):
 
 @router.get("/browse")
 def browse_feed(request: Request, feed_url: str):
+    validate_external_url(feed_url)
     meta = fetch_feed_metadata(feed_url)
     episodes = fetch_episodes(feed_url)
     return request.app.state.templates.TemplateResponse(request, "search/browse.html", {
@@ -54,6 +55,7 @@ def browse_feed(request: Request, feed_url: str):
 
 @router.post("/subscribe")
 def subscribe_from_search(request: Request, feed_url: str, db: sqlite3.Connection = Depends(get_db)):
+    validate_external_url(feed_url)
     cfg = request.app.state.cfg
     meta = fetch_feed_metadata(feed_url)
     podcast_id = upsert_podcast(db, meta.title, meta.author, feed_url,
