@@ -1,5 +1,5 @@
 {% if results %}
-<p>{{ results | length }} result(s)</p>
+<p class="result-count">{{ results | length }} result(s)</p>
 {% for r in results %}
 <article>
   <header><strong>{{ r.title }}</strong></header>
