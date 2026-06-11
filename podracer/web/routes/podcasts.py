@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Request
+import sqlite3
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from podracer.db import (
@@ -12,6 +14,7 @@ from podracer.db import (
     upsert_episode,
 )
 from podracer.feed import fetch_episodes
+from podracer.web.deps import get_db
 
 router = APIRouter()
 
@@ -31,8 +34,7 @@ def index():
 
 
 @router.get("/podcasts")
-def podcast_list(request: Request):
-    db = request.app.state.db
+def podcast_list(request: Request, db: sqlite3.Connection = Depends(get_db)):
     podcasts = get_all_podcasts(db)
     items = [{"podcast": p, "episode_count": get_episode_count(db, p.id)} for p in podcasts]
     return request.app.state.templates.TemplateResponse(request, "podcasts/list.html", {
@@ -42,15 +44,13 @@ def podcast_list(request: Request):
 
 
 @router.post("/podcasts/{podcast_id}/subscribe")
-def podcast_subscribe(request: Request, podcast_id: int):
-    db = request.app.state.db
+def podcast_subscribe(request: Request, podcast_id: int, db: sqlite3.Connection = Depends(get_db)):
     subscribe(db, podcast_id)
     return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
 
 
 @router.post("/podcasts/{podcast_id}/unsubscribe")
-def podcast_unsubscribe(request: Request, podcast_id: int):
-    db = request.app.state.db
+def podcast_unsubscribe(request: Request, podcast_id: int, db: sqlite3.Connection = Depends(get_db)):
     unsubscribe(db, podcast_id)
     return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
 
@@ -65,8 +65,7 @@ def _sync_feed(db, podcast_id: int, feed_url: str) -> int:
 
 
 @router.post("/podcasts/{podcast_id}/sync")
-def podcast_sync(request: Request, podcast_id: int):
-    db = request.app.state.db
+def podcast_sync(request: Request, podcast_id: int, db: sqlite3.Connection = Depends(get_db)):
     podcast = get_podcast(db, podcast_id)
     if podcast:
         _sync_feed(db, podcast_id, podcast.feed_url)
@@ -74,8 +73,7 @@ def podcast_sync(request: Request, podcast_id: int):
 
 
 @router.post("/podcasts/sync-all")
-def podcast_sync_all(request: Request):
-    db = request.app.state.db
+def podcast_sync_all(request: Request, db: sqlite3.Connection = Depends(get_db)):
     for podcast in get_all_podcasts(db):
         _sync_feed(db, podcast.id, podcast.feed_url)
     return RedirectResponse(url="/podcasts", status_code=303)
@@ -85,8 +83,10 @@ STATUSES = ["summarized", "transcribed", "downloaded", "pending"]
 
 
 @router.get("/podcasts/{podcast_id}")
-def podcast_detail(request: Request, podcast_id: int, status: str = "summarized"):
-    db = request.app.state.db
+def podcast_detail(
+    request: Request, podcast_id: int, status: str = "summarized",
+    db: sqlite3.Connection = Depends(get_db),
+):
     podcast = get_podcast(db, podcast_id)
     if not podcast:
         return request.app.state.templates.TemplateResponse(request, "base.html", {

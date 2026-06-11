@@ -1,6 +1,7 @@
+import sqlite3
 from typing import TypedDict
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from podracer.db import (
@@ -12,6 +13,7 @@ from podracer.db import (
     get_transcript,
 )
 from podracer.summarize import Chapter, Highlight, PodcastSummary, SpeakerIdentification
+from podracer.web.deps import get_db
 
 
 class ChapterBucket(TypedDict):
@@ -89,8 +91,7 @@ def _nest_under_chapters(
 
 
 @router.get("/episodes/{episode_id}")
-def episode_detail(request: Request, episode_id: int):
-    db = request.app.state.db
+def episode_detail(request: Request, episode_id: int, db: sqlite3.Connection = Depends(get_db)):
     episode = get_episode(db, episode_id)
     if not episode:
         return request.app.state.templates.TemplateResponse(request, "base.html", {
@@ -138,8 +139,7 @@ def episode_detail(request: Request, episode_id: int):
 
 
 @router.post("/episodes/{episode_id}/enqueue")
-def enqueue_episode(request: Request, episode_id: int):
-    db = request.app.state.db
+def enqueue_episode(request: Request, episode_id: int, db: sqlite3.Connection = Depends(get_db)):
     cfg = request.app.state.cfg
     episode = get_episode(db, episode_id)
     if not episode:
@@ -151,8 +151,7 @@ def enqueue_episode(request: Request, episode_id: int):
 
 
 @router.post("/episodes/{episode_id}/resummarize")
-def resummarize_episode(request: Request, episode_id: int):
-    db = request.app.state.db
+def resummarize_episode(request: Request, episode_id: int, db: sqlite3.Connection = Depends(get_db)):
     cfg = request.app.state.cfg
     episode = get_episode(db, episode_id)
     if not episode:

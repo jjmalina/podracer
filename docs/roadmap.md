@@ -4,6 +4,8 @@ Future features — captured as short sketches. Each entry is problem +
 rough approach, not a full plan. Promote an entry into
 `docs/plans/<date>-<slug>.md` when you're ready to build it.
 
+Fixes and tech debt for *existing* code live in [TODO.md](TODO.md).
+
 ---
 
 ## Site logo
