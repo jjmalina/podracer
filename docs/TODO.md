@@ -16,7 +16,7 @@ priority within each section. Check items off / delete them as they land.
   per-request connection dependency (cheap with SQLite/WAL), or a
   thread-local connection helper.
 
-- [ ] **SSRF via unvalidated `feed_url`** — `web/routes/search.py:39`
+- [x] **SSRF via unvalidated `feed_url`** — `web/routes/search.py:39`
   (`GET /search/browse?feed_url=...`) fetches any URL. On a LAN this
   turns the web UI into a proxy into internal services (Proxmox API,
   etc.). Fix: require http/https scheme and reject private-range /
