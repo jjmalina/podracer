@@ -11,7 +11,9 @@
  */
 
 :root {
-  --pr-sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Display face for titles/brand; body face optimized for long-form reading. */
+  --pr-display: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --pr-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --pr-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --pr-bg: #0c0c0a;
@@ -40,6 +42,7 @@
   --pico-font-family-monospace: var(--pr-mono);
   --pico-font-family: var(--pr-sans);
   --pico-border-radius: 2px;
+  --pico-line-height: 1.55;
   --pico-box-shadow: none;
   --pico-background-color: var(--pr-bg);
   --pico-color: var(--pr-text);
@@ -120,11 +123,16 @@ main.container { flex: 1; }
 }
 
 h1 {
+  font-family: var(--pr-display);
   font-size: 1.85rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
 }
+
+/* Long-form text: cap the measure so summaries stay readable at full width. */
+p { max-width: 72ch; }
+p.flash { max-width: none; }
 
 hgroup p, .meta-line {
   font-family: var(--pr-mono);
@@ -207,7 +215,7 @@ article p { margin-bottom: 0.5rem; }
 .site-header nav { margin-bottom: 0; }
 
 .brand {
-  font-family: var(--pr-sans);
+  font-family: var(--pr-display);
   font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -550,7 +558,7 @@ summary.section-heading:hover { color: var(--pr-text); }
   padding-bottom: 0.5rem;
 }
 .chapters summary.chapter-heading {
-  font-family: var(--pr-sans);
+  font-family: var(--pr-display);
   font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: -0.01em;
