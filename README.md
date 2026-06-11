@@ -125,6 +125,29 @@ uses the in-repo `config.toml` and `data/`. Running it from anywhere else
 (or via the systemd units, which have `WorkingDirectory=%h`) uses the XDG
 config and data. Same binary, different state.
 
+### Logging
+
+Logs go to stderr. The format is set in `config.toml` under `[logging]`, or
+overridden by the `PODRACER_LOG_FORMAT` env var (env wins, matching the rest of
+the config layering):
+
+```toml
+[logging]
+format = "auto"   # auto | console | json
+```
+
+| Value | Behavior |
+|-------|----------|
+| `auto` (default) | Human-readable when stderr is a TTY; JSON (one object per line) otherwise. |
+| `console` | Force human-readable. |
+| `json` | Force JSON — handy for log shippers / aggregation. |
+
+So an interactive `podracer <cmd>` is readable, and the systemd services emit
+JSON automatically — no config needed either way. Operational events carry typed
+fields (e.g. `llm_call` logs `backend`, `model`, `input_tokens`, `output_tokens`,
+`total_tokens`; worker jobs carry `episode_id`/`job_id`), so a JSON-aware backend
+can aggregate them (e.g. tokens-by-model).
+
 The worker uses a watermark — on first run it sets the watermark to "now"
 so the existing backlog is NOT auto-processed. New episodes published
 after that get picked up automatically. To bulk-enqueue old episodes,

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
+import structlog
 from pydantic import BaseModel
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_exponential
 
@@ -263,6 +264,44 @@ def _repair_truncated_json(content: str) -> str:
     return content[:last_brace + 1]
 
 
+class TokenUsage(BaseModel):
+    """Normalized LLM token counts across backends.
+
+    All fields are optional: a backend may omit usage, and we'd rather log a
+    null than crash. Counts are logged as JSON numbers so OpenSearch dynamic-maps
+    them numeric (sum/avg work).
+    """
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+    @staticmethod
+    def from_openai(data: dict) -> "TokenUsage":
+        """OpenAI-compatible response (OpenRouter, vLLM): the ``usage`` object."""
+        usage = data.get("usage") or {}
+        return TokenUsage(
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+        )
+
+    @staticmethod
+    def from_ollama(data: dict) -> "TokenUsage":
+        """Ollama /api/chat response: prompt_eval_count / eval_count."""
+        inp = data.get("prompt_eval_count")
+        out = data.get("eval_count")
+        total = inp + out if inp is not None and out is not None else None
+        return TokenUsage(input_tokens=inp, output_tokens=out, total_tokens=total)
+
+
+def _log_llm_usage(backend_name: str, model: str, usage: TokenUsage) -> None:
+    """Emit one structured ``llm_call`` event so token usage is aggregatable.
+
+    Fields: backend, model, input_tokens, output_tokens, total_tokens.
+    """
+    logger.info("llm_call", backend=backend_name, model=model, **usage.model_dump())
+
+
 def _chat_ollama(backend: Backend, system: str, user: str, schema: dict) -> str:
     payload = {
         "model": backend.model,
@@ -281,7 +320,9 @@ def _chat_ollama(backend: Backend, system: str, user: str, schema: dict) -> str:
         timeout=DEFAULT_TIMEOUT,
     )
     resp.raise_for_status()
-    return _extract_json(resp.json()["message"]["content"])
+    data = resp.json()
+    _log_llm_usage("ollama", backend.model, TokenUsage.from_ollama(data))
+    return _extract_json(data["message"]["content"])
 
 
 def _count_tokens_vllm(backend: Backend, messages: list[dict]) -> int:
@@ -325,6 +366,7 @@ def _chat_vllm(backend: Backend, system: str, user: str, schema: dict) -> str:
         logger.error("vLLM request failed: %s", resp.text)
     resp.raise_for_status()
     data = resp.json()
+    _log_llm_usage("vllm", backend.model, TokenUsage.from_openai(data))
     content = _extract_json(data["choices"][0]["message"]["content"])
     if data["choices"][0]["finish_reason"] == "length":
         logger.warning("Response truncated, attempting repair")
@@ -367,6 +409,7 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict) -> 
         logger.error("OpenRouter request failed: %s", resp.text)
     resp.raise_for_status()
     data = resp.json()
+    _log_llm_usage("openrouter", backend.model, TokenUsage.from_openai(data))
     content = _extract_json(data["choices"][0]["message"]["content"])
     if data["choices"][0].get("finish_reason") == "length":
         logger.warning("Response truncated, attempting repair")
@@ -481,20 +524,26 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
         return chapters
     speaker_key = format_speaker_key(speakers)
     sentinel = "99:99:99"
+    # contextvars bound on the calling thread (e.g. the worker's episode_id /
+    # job_id) don't propagate into ThreadPoolExecutor threads, so capture them
+    # and re-bind inside each task — otherwise the per-chapter llm_call events
+    # (the bulk of token usage) would lose that context.
+    log_context = structlog.contextvars.get_contextvars()
 
     def task(i: int) -> tuple[int, str]:
-        if _is_teaser_chapter(chapters[i]):
-            return i, chapters[i].summary
-        start = chapters[i].timestamp
-        end = chapters[i + 1].timestamp if i + 1 < len(chapters) else sentinel
-        slice_text = _slice_transcript_by_chapter(named_transcript, start, end)
-        if not slice_text:
-            return i, chapters[i].summary
-        try:
-            return i, _enrich_one_chapter(backend, speaker_key, chapters[i], slice_text)
-        except Exception as e:
-            logger.warning("chapter %d enrichment failed (%s); keeping short summary", i, e)
-            return i, chapters[i].summary
+        with structlog.contextvars.bound_contextvars(**log_context):
+            if _is_teaser_chapter(chapters[i]):
+                return i, chapters[i].summary
+            start = chapters[i].timestamp
+            end = chapters[i + 1].timestamp if i + 1 < len(chapters) else sentinel
+            slice_text = _slice_transcript_by_chapter(named_transcript, start, end)
+            if not slice_text:
+                return i, chapters[i].summary
+            try:
+                return i, _enrich_one_chapter(backend, speaker_key, chapters[i], slice_text)
+            except Exception as e:
+                logger.warning("chapter %d enrichment failed (%s); keeping short summary", i, e)
+                return i, chapters[i].summary
 
     workers = min(CHAPTER_DETAIL_WORKERS, len(chapters))
     with ThreadPoolExecutor(max_workers=workers) as ex:

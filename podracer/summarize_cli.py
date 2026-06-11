@@ -1,10 +1,10 @@
 import argparse
-import logging
 import os
 import sys
 from pathlib import Path
 
 from podracer import logger
+from podracer.logging_config import configure_logging
 from podracer.summarize import Backend, PodcastSummary, summarize
 
 
@@ -38,7 +38,7 @@ def print_summary(result: PodcastSummary) -> None:
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+    configure_logging()
 
     parser = argparse.ArgumentParser(description="Summarize a podcast transcript")
     parser.add_argument("transcript_file", help="Path to a transcript text file")

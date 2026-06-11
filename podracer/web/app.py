@@ -9,6 +9,7 @@ from markupsafe import Markup, escape
 
 from podracer.config import Config, load_config
 from podracer.db import get_connection, init_db
+from podracer.logging_config import configure_logging
 from podracer.web.routes.episodes import router as episodes_router
 from podracer.web.routes.jobs import router as jobs_router
 from podracer.web.routes.podcasts import router as podcasts_router
@@ -53,6 +54,11 @@ def linkify(text: str | None) -> Markup:
 def create_app(cfg: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Configure logging here (not just in cli.main) so the app logs
+        # consistently however it's launched — uvicorn directly, --reload
+        # subprocess, or an external ASGI server. cfg.log_format applies the
+        # config.toml setting (env still wins).
+        configure_logging(cfg.log_format)
         # Apply schema + migrations once at startup; requests open their
         # own connections via the get_db dependency (see web/deps.py).
         conn = get_connection(cfg.db_path)
@@ -76,4 +82,8 @@ def create_app(cfg: Config) -> FastAPI:
     return app
 
 
+# Configure logging at import time so the module-level construction below — and
+# uvicorn --reload subprocesses, which import this module directly — log in the
+# configured format from the very first line. Idempotent with cli.main's call.
+configure_logging()
 app = create_app(load_config())

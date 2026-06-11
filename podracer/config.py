@@ -50,6 +50,10 @@ class Config:
     max_attempts: int = 3
     retry_backoff_seconds: int = 300
 
+    # Logging: "auto" (console on a TTY, JSON otherwise) | "console" | "json".
+    # The PODRACER_LOG_FORMAT env var overrides this.
+    log_format: str = "auto"
+
     # API keys
     hf_token: str | None = None
     openrouter_api_key: str | None = None
@@ -153,6 +157,9 @@ def load_config() -> Config:
         config.max_attempts = daemon.get("max_attempts", config.max_attempts)
         config.retry_backoff_seconds = daemon.get("retry_backoff_seconds", config.retry_backoff_seconds)
 
+        logging_cfg = data.get("logging", {})
+        config.log_format = logging_cfg.get("format", config.log_format)
+
         keys = data.get("keys", {})
         config.hf_token = keys.get("hf_token")
         config.openrouter_api_key = keys.get("openrouter_api_key")
@@ -182,6 +189,7 @@ def load_config() -> Config:
     config.deepgram_api_key = os.environ.get("DEEPGRAM_API_KEY", config.deepgram_api_key)
     config.podcast_index_key = os.environ.get("PODCAST_INDEX_KEY", config.podcast_index_key)
     config.podcast_index_secret = os.environ.get("PODCAST_INDEX_SECRET", config.podcast_index_secret)
+    config.log_format = os.environ.get("PODRACER_LOG_FORMAT", config.log_format)
 
     # Anchor relative db_path / media_dir against the config file's directory.
     # Absolute paths pass through unchanged (deployment uses absolute paths in
