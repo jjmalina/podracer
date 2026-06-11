@@ -32,7 +32,7 @@ priority within each section. Check items off / delete them as they land.
   was overstated: `last_synced_at` is display-only and upserts are
   idempotent.)
 
-- [ ] **Timing-safe token compare in whisper service** —
+- [x] **Timing-safe token compare in whisper service** —
   `whisper_service/routes.py:28` uses `token != state.auth_token`.
   Replace with `hmac.compare_digest(token, state.auth_token)`. While
   here: log auth failures (currently silent).
@@ -68,7 +68,7 @@ priority within each section. Check items off / delete them as they land.
 
 ## Low priority
 
-- [ ] **Explicit transactions + `RETURNING` in artifact saves** —
+- [x] **Explicit transactions + `RETURNING` in artifact saves** —
   `save_summary`/`save_transcript`/`delete_summary` pair the artifact
   write with the episode-status update; they're atomic today, but only
   via Python's implicit-transaction default (`isolation_level`), whose

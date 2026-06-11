@@ -11,22 +11,22 @@ def save_transcript(
     conn: sqlite3.Connection, episode_id: int, text: str, model: str,
     language: str | None = None,
 ) -> int:
-    conn.execute(
-        """INSERT INTO transcripts (episode_id, text, model, language)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(episode_id) DO UPDATE SET
-             text=excluded.text, model=excluded.model,
-             language=excluded.language,
-             created_at=datetime('now')""",
-        (episode_id, text, model, language),
-    )
-    conn.execute(
-        "UPDATE episodes SET status = 'transcribed' WHERE id = ?", (episode_id,),
-    )
-    conn.commit()
-    row = conn.execute(
-        "SELECT id FROM transcripts WHERE episode_id = ?", (episode_id,),
-    ).fetchone()
+    # Explicit transaction: the artifact write and the status update must
+    # land together, independent of the connection's autocommit settings.
+    with conn:
+        row = conn.execute(
+            """INSERT INTO transcripts (episode_id, text, model, language)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(episode_id) DO UPDATE SET
+                 text=excluded.text, model=excluded.model,
+                 language=excluded.language,
+                 created_at=datetime('now')
+               RETURNING id""",
+            (episode_id, text, model, language),
+        ).fetchone()
+        conn.execute(
+            "UPDATE episodes SET status = 'transcribed' WHERE id = ?", (episode_id,),
+        )
     return row["id"]
 
 

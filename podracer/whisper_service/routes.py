@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import os
 import tempfile
 import time
@@ -23,9 +24,11 @@ def check_auth(state: ServiceState, authorization: str | None) -> None:
     if state.auth_token is None:
         return
     if not authorization or not authorization.startswith("Bearer "):
+        logger.warning("rejected request with missing/malformed Authorization header")
         raise HTTPException(status_code=401, detail={"error": "missing_auth"})
     token = authorization.removeprefix("Bearer ").strip()
-    if token != state.auth_token:
+    if not hmac.compare_digest(token, state.auth_token):
+        logger.warning("rejected request with invalid auth token")
         raise HTTPException(status_code=403, detail={"error": "invalid_token"})
 
 
