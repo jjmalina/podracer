@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Request
+import sqlite3
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from podracer.db import (
@@ -12,6 +14,7 @@ from podracer.db import (
     get_worker_last_sync,
     retry_job,
 )
+from podracer.web.deps import get_db
 
 router = APIRouter(prefix="/jobs")
 
@@ -52,8 +55,7 @@ def _enrich(conn, jobs):
 
 
 @router.get("")
-def jobs_list(request: Request, flash: str | None = None):
-    db = request.app.state.db
+def jobs_list(request: Request, flash: str | None = None, db: sqlite3.Connection = Depends(get_db)):
     cfg = request.app.state.cfg
     return request.app.state.templates.TemplateResponse(request, "jobs/list.html", {
         "request": request,
@@ -71,16 +73,14 @@ def jobs_list(request: Request, flash: str | None = None):
 
 
 @router.post("/{job_id}/retry")
-def retry(request: Request, job_id: int):
-    db = request.app.state.db
+def retry(request: Request, job_id: int, db: sqlite3.Connection = Depends(get_db)):
     ok = retry_job(db, job_id)
     flash = f"retried-{job_id}" if ok else f"not-retriable-{job_id}"
     return RedirectResponse(url=f"/jobs?flash={flash}", status_code=303)
 
 
 @router.post("/{job_id}/cancel")
-def cancel(request: Request, job_id: int):
-    db = request.app.state.db
+def cancel(request: Request, job_id: int, db: sqlite3.Connection = Depends(get_db)):
     ok = cancel_job(db, job_id)
     flash = f"cancelled-{job_id}" if ok else f"not-cancellable-{job_id}"
     return RedirectResponse(url=f"/jobs?flash={flash}", status_code=303)

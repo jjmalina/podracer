@@ -86,10 +86,10 @@ DEFAULT_CONFIG = {
 }
 
 
-def get_connection(db_path: str | None = None) -> sqlite3.Connection:
+def get_connection(db_path: str | None = None, check_same_thread: bool = True) -> sqlite3.Connection:
     path = db_path or DEFAULT_DB_PATH
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

@@ -1,5 +1,4 @@
 import re
-import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
 from podracer.config import Config, load_config
-from podracer.db import init_db
+from podracer.db import get_connection, init_db
 from podracer.web.routes.episodes import router as episodes_router
 from podracer.web.routes.jobs import router as jobs_router
 from podracer.web.routes.podcasts import router as podcasts_router
@@ -54,17 +53,15 @@ def linkify(text: str | None) -> Markup:
 def create_app(cfg: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        db_path = cfg.db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        init_db(conn)
-        app.state.db = conn
+        # Apply schema + migrations once at startup; requests open their
+        # own connections via the get_db dependency (see web/deps.py).
+        conn = get_connection(cfg.db_path)
+        try:
+            init_db(conn)
+        finally:
+            conn.close()
         app.state.cfg = cfg
         yield
-        conn.close()
 
     app = FastAPI(title="podracer", lifespan=lifespan)
     app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))

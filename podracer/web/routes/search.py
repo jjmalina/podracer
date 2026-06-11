@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Request
+import sqlite3
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from podracer.db import subscribe, update_podcast_synced, upsert_episode, upsert_podcast
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.process import queue_latest_unprocessed_episode
 from podracer.search import search_podcasts
+from podracer.web.deps import get_db
 
 router = APIRouter(prefix="/search")
 
@@ -50,8 +53,7 @@ def browse_feed(request: Request, feed_url: str):
 
 
 @router.post("/subscribe")
-def subscribe_from_search(request: Request, feed_url: str):
-    db = request.app.state.db
+def subscribe_from_search(request: Request, feed_url: str, db: sqlite3.Connection = Depends(get_db)):
     cfg = request.app.state.cfg
     meta = fetch_feed_metadata(feed_url)
     podcast_id = upsert_podcast(db, meta.title, meta.author, feed_url,
