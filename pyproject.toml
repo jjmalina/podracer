@@ -15,6 +15,7 @@ dependencies = [
     "tenacity>=8.0",
     "deepgram-sdk>=3.0",
     "python-multipart>=0.0.9",
+    "structlog>=24.1",
 ]
 
 [project.optional-dependencies]

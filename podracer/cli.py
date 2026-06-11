@@ -32,6 +32,7 @@ from podracer.db import (
 )
 from podracer.download import download_episode
 from podracer.feed import fetch_episodes, fetch_feed_metadata
+from podracer.logging_config import configure_logging
 from podracer.process import (
     process_episode,
     queue_latest_unprocessed_episode,
@@ -51,6 +52,9 @@ def _config() -> Config:
     global _cfg
     if _cfg is None:
         _cfg = load_config()
+        # Re-apply the configured log format now that config.toml is loaded
+        # (the early configure_logging() in main() only had env/auto). env wins.
+        configure_logging(_cfg.log_format)
     return _cfg
 
 
@@ -368,13 +372,17 @@ def cmd_summarize(args):
 
 
 def cmd_serve(args):
+    # log_config=None: don't let uvicorn install its own logging config, so its
+    # access/error loggers propagate to the root handler set up by
+    # configure_logging() (in the app lifespan) and render in the same
+    # console/JSON format as the rest of podracer.
     if args.reload:
         uvicorn.run("podracer.web.app:app", host=args.host, port=args.port,
-                    reload=True, reload_dirs=["podracer"])
+                    reload=True, reload_dirs=["podracer"], log_config=None)
     else:
         cfg = _config()
         app = create_app(cfg)
-        uvicorn.run(app, host=args.host, port=args.port)
+        uvicorn.run(app, host=args.host, port=args.port, log_config=None)
 
 
 def cmd_process(args):
@@ -415,10 +423,10 @@ def cmd_worker(args):
         worker.run_once()
         return
     worker.install_signal_handlers()
-    logger.info("worker starting (sync_interval=%dm, max_attempts=%d)",
-                cfg.sync_interval_minutes, cfg.max_attempts)
+    logger.info("worker_starting", sync_interval_minutes=cfg.sync_interval_minutes,
+                max_attempts=cfg.max_attempts)
     worker.run_forever()
-    logger.info("worker stopped")
+    logger.info("worker_stopped")
 
 
 def cmd_status(args):
@@ -470,12 +478,7 @@ def cmd_status(args):
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    configure_logging()
 
     parser = argparse.ArgumentParser(prog="podracer", description="Podcast knowledge platform")
     parser.add_argument("--json", action="store_true", help="Output JSON")

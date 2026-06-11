@@ -5,6 +5,8 @@ import threading
 import time
 from datetime import UTC, datetime
 
+import structlog
+
 from podracer import logger
 from podracer.config import Config
 from podracer.db import (
@@ -44,7 +46,7 @@ class Worker:
 
     def install_signal_handlers(self) -> None:
         def _stop(signum, _frame):
-            logger.info("received signal %d, shutting down gracefully", signum)
+            logger.info("shutdown_signal", signal=signum)
             self.shutdown.set()
         signal.signal(signal.SIGTERM, _stop)
         signal.signal(signal.SIGINT, _stop)
@@ -61,7 +63,7 @@ class Worker:
         (sync_interval_minutes) since RSS doesn't change in seconds."""
         requeued = reset_running_jobs(self.conn)
         if requeued:
-            logger.info("orphan recovery: requeued %d running job(s)", requeued)
+            logger.info("orphan_recovery", requeued=requeued)
         init_worker_watermark(self.conn)
 
         sync_interval = self.cfg.sync_interval_minutes * 60
@@ -77,7 +79,7 @@ class Worker:
                     last_sync = now
                 self._drain_queue()
             except Exception:
-                logger.exception("worker iteration failed")
+                logger.exception("worker_iteration_failed")
             self.shutdown.wait(timeout=drain_interval)
 
     # --- internals ---
@@ -94,12 +96,12 @@ class Worker:
                 # One transaction per podcast: update_podcast_synced commits
                 # the upserts and the last_synced_at bump together.
                 update_podcast_synced(self.conn, podcast.id)
-                logger.info("synced %s (%d episodes)", podcast.title, len(episodes))
+                logger.info("feed_synced", podcast=podcast.title, episodes=len(episodes))
             except Exception:
                 # Drop any partial batch — without this, pending upserts would
                 # ride along in whatever commit happens next on this connection.
                 self.conn.rollback()
-                logger.exception("feed sync failed: %s", podcast.title)
+                logger.exception("feed_sync_failed", podcast=podcast.title)
         set_worker_last_sync(self.conn, _utcnow_iso())
 
     def _enqueue_new(self) -> None:
@@ -113,8 +115,8 @@ class Worker:
                 self.conn, episode_id, max_attempts=self.cfg.max_attempts,
             )
             if result:
-                logger.info("enqueued episode %d (transcribe=%d, summarize=%d)",
-                            episode_id, result[0], result[1])
+                logger.info("episode_enqueued", episode_id=episode_id,
+                            transcribe=result[0], summarize=result[1])
         # Keep the global watermark advancing for `podracer status` visibility.
         set_worker_watermark(self.conn, _sqlite_now(self.conn))
 
@@ -126,20 +128,25 @@ class Worker:
             self._run_job(job)
 
     def _run_job(self, job: Job) -> None:
-        logger.info("running job %d: %s for episode %d (attempt %d/%d)",
-                    job.id, job.kind, job.episode_id,
-                    job.attempts + 1, job.max_attempts)
-        try:
-            self._dispatch(job)
-            mark_job_done(self.conn, job.id)
-            logger.info("job %d done", job.id)
-        except Exception as e:
-            logger.exception("job %d failed: %s", job.id, e)
-            terminal = mark_job_failed(self.conn, job.id, str(e))
-            if terminal:
-                blocked = cascade_block_dependents(self.conn, job.id)
-                logger.warning("job %d exhausted retries; blocked %d dependents",
-                               job.id, blocked)
+        # Bind job context so every log emitted while this job runs — including
+        # the LLM token-usage events deep in summarize — carries job_id /
+        # episode_id / job_kind, making per-episode filtering trivial. The
+        # context manager resets exactly these on exit (clear_contextvars would
+        # wipe anything else an outer scope may have bound).
+        with structlog.contextvars.bound_contextvars(
+            job_id=job.id, episode_id=job.episode_id, job_kind=job.kind,
+        ):
+            logger.info("job_running", attempt=job.attempts + 1, max_attempts=job.max_attempts)
+            try:
+                self._dispatch(job)
+                mark_job_done(self.conn, job.id)
+                logger.info("job_done")
+            except Exception as e:
+                logger.exception("job_failed", error=str(e))
+                terminal = mark_job_failed(self.conn, job.id, str(e))
+                if terminal:
+                    blocked = cascade_block_dependents(self.conn, job.id)
+                    logger.warning("job_exhausted_retries", blocked=blocked)
 
     def _dispatch(self, job: Job) -> None:
         if job.kind == "transcribe":

@@ -25,6 +25,11 @@ drain_interval_seconds = 10      # how often to check the job queue (UI enqueues
 max_attempts = 3
 retry_backoff_seconds = 300
 
+[logging]
+# "auto" = human-readable on a TTY, JSON otherwise; or force "console" / "json".
+# The PODRACER_LOG_FORMAT env var overrides this (the systemd units set json).
+format = "auto"
+
 # API keys come from ~/.config/podracer/.credentials/{deepgram_token,
 # openrouter_token, hf_token} or env vars (DEEPGRAM_API_KEY,
 # OPENROUTER_API_KEY, HF_TOKEN). The install script copies any existing

@@ -1,11 +1,31 @@
 """Shared pytest fixtures."""
+import logging
 import sqlite3
 from collections.abc import Iterator
 
 import pytest
+import structlog
 
+from podracer import logging_config
 from podracer.db import init_db
 from podracer.models import FeedEpisode
+
+
+@pytest.fixture(autouse=True)
+def _isolate_logging_state() -> Iterator[None]:
+    """Keep logging tests hermetic: configure_logging() swaps the root handler
+    (some tests point it at a StringIO) and sets a module-global. Snapshot and
+    restore both so tests don't leak handlers/format into each other."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    saved_format = logging_config._configured_format
+    try:
+        yield
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+        logging_config._configured_format = saved_format
+        structlog.contextvars.clear_contextvars()
 
 
 @pytest.fixture

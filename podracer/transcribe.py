@@ -14,6 +14,7 @@ from tenacity import (
 )
 
 from podracer import logger
+from podracer.logging_config import configure_logging
 
 DEEPGRAM_TIMEOUT_SECONDS = 1800  # 30 min — large podcast uploads can take a while
 WHISPER_SERVICE_TIMEOUT_SECONDS = 3600
@@ -144,6 +145,8 @@ def _transcribe_whisperx_http(
 
 
 def main():
+    configure_logging()
+
     parser = argparse.ArgumentParser(description="Transcribe audio files")
     parser.add_argument("audio_file", help="Path to the audio file to transcribe")
     parser.add_argument("--backend", default="deepgram",
