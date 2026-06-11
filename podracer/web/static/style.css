@@ -526,11 +526,21 @@ summary.section-heading::before {
   flex-shrink: 0;
 }
 .collapsible-section[open] > summary.section-heading::before { content: "▾"; }
+/* The trailing hairline reuses ::after, which Pico styles as a rotating
+   chevron on every details summary — neutralize all of that here. */
 summary.section-heading::after {
   content: "";
   flex: 1;
+  width: auto;
+  height: auto;
+  float: none;
+  margin-inline-start: 0;
   border-top: 1px solid var(--pr-line);
+  background-image: none;
+  transform: none;
+  transition: none;
 }
+.collapsible-section[open] > summary.section-heading::after { transform: none; }
 summary.section-heading:hover { color: var(--pr-text); }
 
 /* ---------- chapters ---------- */
@@ -571,6 +581,7 @@ summary.section-heading:hover { color: var(--pr-text); }
   margin: 0;
 }
 .chapters summary.chapter-heading::-webkit-details-marker { display: none; }
+.chapters summary.chapter-heading::after { display: none; }
 .chapters summary.chapter-heading::before {
   content: "▸";
   color: var(--pr-accent);
