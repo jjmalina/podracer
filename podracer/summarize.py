@@ -1,12 +1,13 @@
 import json
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_exponential
 
 from podracer import logger
@@ -15,6 +16,22 @@ DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 131072
 DEFAULT_MAX_TOKENS = 16384
 CHAPTER_DETAIL_WORKERS = 5
+
+# --- LLM output quality guards ---------------------------------------------
+# See docs/plans/2026-06-12-llm-output-quality-guards.md. deepseek-v4-flash via
+# OpenRouter intermittently returns degenerate completions — stub text that
+# stops mid-sentence (finish_reason "stop", schema-valid JSON), or prose instead
+# of JSON — that every existing check passes. They are transient, so we validate
+# content plausibility after each call and retry the call when it fails.
+_MAX_LLM_ATTEMPTS = 3              # 1 initial attempt + 2 retries
+_RETRY_BACKOFF = 0.5              # seconds between degenerate-output retries
+_MIN_SUMMARY_CHARS = 200          # an episode summary (3-5 paragraphs) shorter than this is a stub
+_MIN_HIGHLIGHTS = 5              # prompt asks for 15-25; <5 on a full episode is degenerate
+_MIN_HIGHLIGHT_CHARS = 40        # an individual highlight shorter than this is a stub ("On GenAI: ")
+_BAD_HIGHLIGHT_FRACTION = 0.2    # if >20% of items are degenerate, the whole response is suspect
+_SUBSTANTIAL_SLICE_CHARS = 3000  # a chapter whose transcript slice is this long should get a real writeup
+_MIN_CHAPTER_DETAIL_CHARS = 400  # ...so a sub-400-char detail for such a chapter is too thin (prompt asks 150-300 words)  # noqa: E501
+_TERMINAL_PUNCT = (".", "!", "?", '"', ")", "”", "’", "…")
 
 
 @dataclass
@@ -264,6 +281,62 @@ def _repair_truncated_json(content: str) -> str:
     return content[:last_brace + 1]
 
 
+class DegenerateOutputError(Exception):
+    """An LLM response that is schema-valid but implausible as content: a stub,
+    an empty list, or text cut off mid-sentence. Raised by the validators below
+    to trigger a retry of the call."""
+
+    def __init__(self, step: str, reason: str, *, output_chars: int | None = None):
+        super().__init__(f"{step}: {reason}")
+        self.step = step
+        self.reason = reason
+        self.output_chars = output_chars
+
+
+def _ends_terminally(text: str) -> bool:
+    """True if text ends in sentence-terminal punctuation. A stub like
+    ``"Kelsey Hightower articulates a "`` fails this; a complete sentence
+    (even one ending in a quote or paren) passes."""
+    text = text.rstrip()
+    return bool(text) and text.endswith(_TERMINAL_PUNCT)
+
+
+def _check_speakers(m: "SpeakerIdentifications") -> None:
+    if not m.speakers:
+        raise DegenerateOutputError("speakers", "no speakers identified")
+
+
+def _check_summary(m: "Summary") -> None:
+    s = m.summary.strip()
+    if len(s) < _MIN_SUMMARY_CHARS or not _ends_terminally(s):
+        raise DegenerateOutputError("summary", f"stub or mid-sentence cut ({len(s)} chars)", output_chars=len(s))
+
+
+def _check_chapters(m: "ChapterList") -> None:
+    if len(m.chapters) < 2:
+        raise DegenerateOutputError("chapters", f"only {len(m.chapters)} chapter(s)")
+    if len({c.timestamp for c in m.chapters}) < 2:
+        raise DegenerateOutputError("chapters", "chapters do not span multiple timestamps")
+
+
+def _check_highlights(m: "HighlightList") -> None:
+    """Drop stub items, then judge the surviving list. Mutates ``m.highlights``
+    so an accepted response keeps only the good items (per the plan: drop bad
+    items unless too many fail, in which case retry the whole call)."""
+    good = [h for h in m.highlights
+            if len(h.text.strip()) >= _MIN_HIGHLIGHT_CHARS and _ends_terminally(h.text)]
+    total = len(m.highlights)
+    dropped = total - len(good)
+    m.highlights = good
+    if len(good) < _MIN_HIGHLIGHTS:
+        raise DegenerateOutputError(
+            "highlights", f"only {len(good)} usable highlights (dropped {dropped} of {total})",
+            output_chars=len(good))
+    if total and dropped > _BAD_HIGHLIGHT_FRACTION * total:
+        raise DegenerateOutputError(
+            "highlights", f"{dropped} of {total} highlights degenerate", output_chars=len(good))
+
+
 class TokenUsage(BaseModel):
     """Normalized LLM token counts across backends.
 
@@ -294,15 +367,33 @@ class TokenUsage(BaseModel):
         return TokenUsage(input_tokens=inp, output_tokens=out, total_tokens=total)
 
 
-def _log_llm_usage(backend_name: str, model: str, usage: TokenUsage) -> None:
+@dataclass
+class ChatResult:
+    """One chat completion plus the signals the quality guards inspect."""
+    content: str
+    finish_reason: str | None = None
+    native_finish_reason: str | None = None
+    provider: str | None = None
+    output_tokens: int | None = None
+
+
+def _log_llm_usage(backend_name: str, model: str, usage: TokenUsage, *,
+                   finish_reason: str | None = None,
+                   native_finish_reason: str | None = None,
+                   provider: str | None = None) -> None:
     """Emit one structured ``llm_call`` event so token usage is aggregatable.
 
-    Fields: backend, model, input_tokens, output_tokens, total_tokens.
+    Beyond the token counts, logs ``finish_reason`` / ``native_finish_reason`` /
+    ``provider`` so a degenerate (e.g. 14-token) completion is distinguishable
+    from a healthy one in OpenSearch, and so a misbehaving provider is nameable.
     """
-    logger.info("llm_call", backend=backend_name, model=model, **usage.model_dump())
+    logger.info("llm_call", backend=backend_name, model=model,
+                finish_reason=finish_reason, native_finish_reason=native_finish_reason,
+                provider=provider, **usage.model_dump())
 
 
-def _chat_ollama(backend: Backend, system: str, user: str, schema: dict) -> str:
+def _chat_ollama(backend: Backend, system: str, user: str, schema: dict,
+                 repair: bool = False) -> ChatResult:
     payload = {
         "model": backend.model,
         "stream": False,
@@ -321,8 +412,13 @@ def _chat_ollama(backend: Backend, system: str, user: str, schema: dict) -> str:
     )
     resp.raise_for_status()
     data = resp.json()
-    _log_llm_usage("ollama", backend.model, TokenUsage.from_ollama(data))
-    return _extract_json(data["message"]["content"])
+    usage = TokenUsage.from_ollama(data)
+    finish_reason = data.get("done_reason")
+    _log_llm_usage("ollama", backend.model, usage, finish_reason=finish_reason)
+    content = _extract_json(data["message"]["content"])
+    if repair:
+        content = _repair_truncated_json(content)
+    return ChatResult(content=content, finish_reason=finish_reason, output_tokens=usage.output_tokens)
 
 
 def _count_tokens_vllm(backend: Backend, messages: list[dict]) -> int:
@@ -336,7 +432,8 @@ def _count_tokens_vllm(backend: Backend, messages: list[dict]) -> int:
     return 0
 
 
-def _chat_vllm(backend: Backend, system: str, user: str, schema: dict) -> str:
+def _chat_vllm(backend: Backend, system: str, user: str, schema: dict,
+               repair: bool = False) -> ChatResult:
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -366,15 +463,17 @@ def _chat_vllm(backend: Backend, system: str, user: str, schema: dict) -> str:
         logger.error("vLLM request failed: %s", resp.text)
     resp.raise_for_status()
     data = resp.json()
-    _log_llm_usage("vllm", backend.model, TokenUsage.from_openai(data))
+    usage = TokenUsage.from_openai(data)
+    finish_reason = data["choices"][0].get("finish_reason")
+    _log_llm_usage("vllm", backend.model, usage, finish_reason=finish_reason)
     content = _extract_json(data["choices"][0]["message"]["content"])
-    if data["choices"][0]["finish_reason"] == "length":
-        logger.warning("Response truncated, attempting repair")
+    if repair:
         content = _repair_truncated_json(content)
-    return content
+    return ChatResult(content=content, finish_reason=finish_reason, output_tokens=usage.output_tokens)
 
 
-def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict) -> str:
+def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
+                     repair: bool = False) -> ChatResult:
     payload = {
         "model": backend.model,
         "messages": [
@@ -387,6 +486,11 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict) -> 
             "type": "json_schema",
             "json_schema": {"name": "response", "strict": True, "schema": schema},
         },
+        # Only route to providers that honor response_format.json_schema. This
+        # kills most of the prose-instead-of-JSON responses at the source —
+        # they came from providers that silently ignored the structured-output
+        # request. (Pair with the retry below as a backstop.)
+        "provider": {"require_parameters": True},
     }
     headers = {"Authorization": f"Bearer {backend.api_key}"}
 
@@ -409,20 +513,91 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict) -> 
         logger.error("OpenRouter request failed: %s", resp.text)
     resp.raise_for_status()
     data = resp.json()
-    _log_llm_usage("openrouter", backend.model, TokenUsage.from_openai(data))
-    content = _extract_json(data["choices"][0]["message"]["content"])
-    if data["choices"][0].get("finish_reason") == "length":
-        logger.warning("Response truncated, attempting repair")
+    usage = TokenUsage.from_openai(data)
+    choice = data["choices"][0]
+    finish_reason = choice.get("finish_reason")
+    native_finish_reason = choice.get("native_finish_reason")
+    provider = data.get("provider")
+    _log_llm_usage("openrouter", backend.model, usage, finish_reason=finish_reason,
+                   native_finish_reason=native_finish_reason, provider=provider)
+    content = _extract_json(choice["message"]["content"])
+    if repair:
         content = _repair_truncated_json(content)
-    return content
+    return ChatResult(content=content, finish_reason=finish_reason,
+                      native_finish_reason=native_finish_reason, provider=provider,
+                      output_tokens=usage.output_tokens)
 
 
-def _chat(backend: Backend, system: str, user: str, schema: dict) -> str:
+def _chat(backend: Backend, system: str, user: str, schema: dict,
+          repair: bool = False) -> ChatResult:
     if backend.name == "vllm":
-        return _chat_vllm(backend, system, user, schema)
+        return _chat_vllm(backend, system, user, schema, repair)
     if backend.name == "openrouter":
-        return _chat_openrouter(backend, system, user, schema)
-    return _chat_ollama(backend, system, user, schema)
+        return _chat_openrouter(backend, system, user, schema, repair)
+    return _chat_ollama(backend, system, user, schema, repair)
+
+
+def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_cls: type[M],
+                                check: Callable[[M], None], *,
+                                prefer: Callable[[M], int] | None = None) -> tuple[M | None, bool]:
+    """Call the LLM, validate schema *and* content, retrying on degeneracy.
+
+    Returns ``(model, passed)``. ``model`` is the first response that passes
+    both schema (Pydantic) and content (``check``) validation. If none do, it is
+    the "best" failed response — chosen by ``prefer(model)`` (a sort key, e.g.
+    summary length), defaulting to the last — or ``None`` if nothing ever
+    parsed. ``check(model)`` raises :class:`DegenerateOutputError` on implausible
+    content and may filter the model in place (highlights). ``finish_reason ==
+    "length"`` alone is *not* a retry trigger: a complete, plausible answer that
+    merely hit the token cap passes the content check, and a truncated one fails
+    it (mid-sentence). JSON repair is attempted only on the final attempt, so it
+    no longer masks truncation on the first response.
+    """
+    schema = model_cls.model_json_schema()
+    best: M | None = None
+    best_key: int | None = None
+    for attempt in range(_MAX_LLM_ATTEMPTS):
+        is_last = attempt == _MAX_LLM_ATTEMPTS - 1
+        result = _chat(backend, system, user, schema, repair=is_last)
+        model: M | None = None
+        reason: str | None = None
+        try:
+            model = model_cls.model_validate_json(result.content)
+        except ValidationError:
+            reason = "invalid_json"  # prose-instead-of-JSON, or unrepairable truncation
+        if model is not None:
+            try:
+                check(model)
+            except DegenerateOutputError as de:
+                reason = de.reason
+        if model is not None and reason is None:
+            return model, True
+        logger.warning("llm_degenerate_output", attempt=attempt + 1,
+                       max_attempts=_MAX_LLM_ATTEMPTS, reason=reason,
+                       finish_reason=result.finish_reason, provider=result.provider,
+                       output_tokens=result.output_tokens)
+        if model is not None:
+            key = prefer(model) if prefer else attempt
+            if best_key is None or key > best_key:
+                best, best_key = model, key
+        if not is_last:
+            time.sleep(_RETRY_BACKOFF)
+    return best, False
+
+
+def _checked_or_fail[M: BaseModel](model_cls: type[M], backend: Backend, system: str, user: str,
+                                   check: Callable[[M], None]) -> M:
+    """:func:`_chat_checked` for an episode-level step. Accepts a best-effort
+    response when retries are exhausted (better a degraded episode than a failed
+    job), but raises — failing the job so the worker retries it — if nothing
+    ever parsed, rather than storing a structurally broken episode."""
+    model, passed = _chat_checked(backend, system, user, model_cls, check)
+    if model is None:
+        step = structlog.contextvars.get_contextvars().get("step", model_cls.__name__)
+        raise DegenerateOutputError(step, "no valid response after retries")
+    if not passed:
+        logger.warning("llm_degenerate_output_exhausted", accepted=True)
+    return model
 
 
 def _build_context_prefix(podcast_description: str | None = None,
@@ -441,12 +616,12 @@ def identify_speakers(transcript: str, backend: Backend,
                       show_notes: str | None = None,
                       podcast_description: str | None = None) -> list[SpeakerIdentification]:
     prefix = _build_context_prefix(podcast_description, show_notes)
-    content = _chat(
-        backend, SPEAKER_ID_PROMPT,
+    model = _checked_or_fail(
+        SpeakerIdentifications, backend, SPEAKER_ID_PROMPT,
         f"Identify every speaker in this transcript:\n\n{prefix}{transcript}",
-        SpeakerIdentifications.model_json_schema(),
+        _check_speakers,
     )
-    return SpeakerIdentifications.model_validate_json(content).speakers
+    return model.speakers
 
 
 def format_speaker_key(speakers: list[SpeakerIdentification]) -> str:
@@ -471,12 +646,17 @@ def rewrite_transcript(transcript: str, speakers: list[SpeakerIdentification]) -
 
 
 def _step(label: str, func, *args):
-    logger.info("[%s] starting...", label)
-    start = time.time()
-    result = func(*args)
-    elapsed = time.time() - start
-    logger.info("[%s] done (%.1fs)", label, elapsed)
-    return result
+    # Bind `step` as a contextvar so every event emitted underneath (llm_call,
+    # llm_degenerate_output, ...) is tagged with which pass produced it —
+    # including the chapter-detail ThreadPoolExecutor, which captures these
+    # contextvars and re-binds them in its worker threads.
+    with structlog.contextvars.bound_contextvars(step=label):
+        logger.info("[%s] starting...", label)
+        start = time.time()
+        result = func(*args)
+        elapsed = time.time() - start
+        logger.info("[%s] done (%.1fs)", label, elapsed)
+        return result
 
 
 _TS_RE = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]")
@@ -509,8 +689,27 @@ def _enrich_one_chapter(backend: Backend, speaker_key: str, chapter: "Chapter", 
         f"{speaker_key}\n\n"
         f"TRANSCRIPT SEGMENT FOR THIS CHAPTER:\n{slice_text}"
     )
-    content = _chat(backend, CHAPTER_DETAIL_PROMPT, user, Summary.model_json_schema())
-    return Summary.model_validate_json(content).summary
+
+    def check(m: "Summary") -> None:
+        s = m.summary.strip()
+        if not _ends_terminally(s):
+            raise DegenerateOutputError("chapter_detail", "stub or mid-sentence cut", output_chars=len(s))
+        if len(slice_text) > _SUBSTANTIAL_SLICE_CHARS and len(s) < _MIN_CHAPTER_DETAIL_CHARS:
+            raise DegenerateOutputError(
+                "chapter_detail", f"thin ({len(s)} chars) for a substantial chapter", output_chars=len(s))
+
+    model, passed = _chat_checked(backend, CHAPTER_DETAIL_PROMPT, user, Summary, check,
+                                  prefer=lambda m: len(m.summary))
+    if passed and model is not None:
+        return model.summary
+    # Retries exhausted. Never downgrade the reader's experience: keep the best
+    # enrichment we got if it has more substance than the existing chapters-pass
+    # summary, otherwise fall back to that summary (the original behavior).
+    best = model.summary if model is not None else ""
+    kept = "enrichment" if len(best) > len(chapter.summary) else "short_summary"
+    logger.warning("chapter_enrichment_fallback", chapter_title=chapter.title, kept=kept,
+                   enrichment_chars=len(best), short_summary_chars=len(chapter.summary))
+    return best if kept == "enrichment" else chapter.summary
 
 
 def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
@@ -542,7 +741,10 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
             try:
                 return i, _enrich_one_chapter(backend, speaker_key, chapters[i], slice_text)
             except Exception as e:
-                logger.warning("chapter %d enrichment failed (%s); keeping short summary", i, e)
+                # Degenerate output is handled inside _enrich_one_chapter; this
+                # catches transport/unexpected errors so one chapter can't sink
+                # the whole episode.
+                logger.warning("chapter_enrichment_error", chapter=i, error=str(e))
                 return i, chapters[i].summary
 
     workers = min(CHAPTER_DETAIL_WORKERS, len(chapters))
@@ -564,31 +766,28 @@ def summarize(transcript: str, backend: Backend | None = None,
 
     notes_prefix = _build_context_prefix(podcast_description, show_notes)
 
-    summary_content = _step(
-        "summary", _chat,
-        backend, SUMMARY_PROMPT,
+    summary = _step(
+        "summary", _checked_or_fail,
+        Summary, backend, SUMMARY_PROMPT,
         f"Summarize this transcript:\n\n{notes_prefix}{named_transcript}",
-        Summary.model_json_schema(),
-    )
-    summary = Summary.model_validate_json(summary_content).summary
+        _check_summary,
+    ).summary
 
-    chapters_content = _step(
-        "chapters", _chat,
-        backend, CHAPTERS_PROMPT,
+    chapters = _step(
+        "chapters", _checked_or_fail,
+        ChapterList, backend, CHAPTERS_PROMPT,
         f"Generate chapters for this transcript:\n\n{notes_prefix}{named_transcript}",
-        ChapterList.model_json_schema(),
-    )
-    chapters = ChapterList.model_validate_json(chapters_content).chapters
+        _check_chapters,
+    ).chapters
 
     chapters = _step("chapter_detail", enrich_chapters, chapters, named_transcript, speakers, backend)
 
-    highlights_content = _step(
-        "highlights", _chat,
-        backend, HIGHLIGHTS_PROMPT,
+    highlights = _step(
+        "highlights", _checked_or_fail,
+        HighlightList, backend, HIGHLIGHTS_PROMPT,
         f"Extract highlights from this transcript:\n\n{notes_prefix}{named_transcript}",
-        HighlightList.model_json_schema(),
-    )
-    highlights = HighlightList.model_validate_json(highlights_content).highlights
+        _check_highlights,
+    ).highlights
 
     return PodcastSummary(
         summary=summary,
