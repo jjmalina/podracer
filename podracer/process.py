@@ -7,6 +7,8 @@ connection and a Config.
 import os
 import sqlite3
 
+import structlog
+
 from podracer import logger
 from podracer.config import Config
 from podracer.db import (
@@ -117,11 +119,14 @@ def summarize_episode(
     sum_backend = _build_summarize_backend(cfg, backend, model)
     podcast = get_podcast(conn, episode.podcast_id)
     logger.info("Summarizing: %s", episode.title)
-    result = summarize(
-        transcript.text, backend=sum_backend,
-        show_notes=episode.show_notes,
-        podcast_description=podcast.description if podcast else None,
-    )
+    # Tag every LLM event (llm_call, llm_degenerate_output, ...) with episode_id.
+    # The worker also binds this per job; binding here covers the CLI path too.
+    with structlog.contextvars.bound_contextvars(episode_id=episode.id):
+        result = summarize(
+            transcript.text, backend=sum_backend,
+            show_notes=episode.show_notes,
+            podcast_description=podcast.description if podcast else None,
+        )
     save_summary(conn, episode.id, result.model_dump_json(),
                  sum_backend.model, sum_backend.name)
     return result

@@ -374,6 +374,7 @@ class ChatResult:
     finish_reason: str | None = None
     native_finish_reason: str | None = None
     provider: str | None = None
+    input_tokens: int | None = None
     output_tokens: int | None = None
 
 
@@ -418,7 +419,8 @@ def _chat_ollama(backend: Backend, system: str, user: str, schema: dict,
     content = _extract_json(data["message"]["content"])
     if repair:
         content = _repair_truncated_json(content)
-    return ChatResult(content=content, finish_reason=finish_reason, output_tokens=usage.output_tokens)
+    return ChatResult(content=content, finish_reason=finish_reason,
+                      input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
 
 
 def _count_tokens_vllm(backend: Backend, messages: list[dict]) -> int:
@@ -469,7 +471,8 @@ def _chat_vllm(backend: Backend, system: str, user: str, schema: dict,
     content = _extract_json(data["choices"][0]["message"]["content"])
     if repair:
         content = _repair_truncated_json(content)
-    return ChatResult(content=content, finish_reason=finish_reason, output_tokens=usage.output_tokens)
+    return ChatResult(content=content, finish_reason=finish_reason,
+                      input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
 
 
 def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
@@ -525,7 +528,7 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
         content = _repair_truncated_json(content)
     return ChatResult(content=content, finish_reason=finish_reason,
                       native_finish_reason=native_finish_reason, provider=provider,
-                      output_tokens=usage.output_tokens)
+                      input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
 
 
 def _chat(backend: Backend, system: str, user: str, schema: dict,
@@ -572,10 +575,13 @@ def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_
                 reason = de.reason
         if model is not None and reason is None:
             return model, True
+        # One warning per failed attempt. episode_id is attached automatically
+        # via the contextvar bound in summarize_episode / the worker.
         logger.warning("llm_degenerate_output", attempt=attempt + 1,
                        max_attempts=_MAX_LLM_ATTEMPTS, reason=reason,
-                       finish_reason=result.finish_reason, provider=result.provider,
-                       output_tokens=result.output_tokens)
+                       backend=backend.name, model=backend.model, provider=result.provider,
+                       finish_reason=result.finish_reason,
+                       input_tokens=result.input_tokens, output_tokens=result.output_tokens)
         if model is not None:
             key = prefer(model) if prefer else attempt
             if best_key is None or key > best_key:
