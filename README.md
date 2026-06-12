@@ -148,6 +148,22 @@ fields (e.g. `llm_call` logs `backend`, `model`, `input_tokens`, `output_tokens`
 `total_tokens`; worker jobs carry `episode_id`/`job_id`), so a JSON-aware backend
 can aggregate them (e.g. tokens-by-model).
 
+### Error reporting (Sentry / GlitchTip)
+
+Set a DSN to report exceptions to a Sentry-compatible backend (e.g. GlitchTip).
+Configure it in `config.toml`, or override with the `SENTRY_DSN` env var (env
+wins, same layering as everything else):
+
+```toml
+[sentry]
+dsn = "https://<key>@errors.example.com/<project-id>"
+```
+
+Unset = off, so local dev and the CLI are unaffected. Web request exceptions are
+captured via the FastAPI integration; worker job failures are captured explicitly
+(tagged with `episode_id`/`job_kind`). Optional `PODRACER_ENV` sets the Sentry
+environment (default `production`).
+
 The worker uses a watermark — on first run it sets the watermark to "now"
 so the existing backlog is NOT auto-processed. New episodes published
 after that get picked up automatically. To bulk-enqueue old episodes,

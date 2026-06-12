@@ -10,6 +10,7 @@ from markupsafe import Markup, escape
 from podracer.config import Config, load_config
 from podracer.db import get_connection, init_db
 from podracer.logging_config import configure_logging
+from podracer.sentry_config import configure_sentry
 from podracer.web.routes.episodes import router as episodes_router
 from podracer.web.routes.jobs import router as jobs_router
 from podracer.web.routes.podcasts import router as podcasts_router
@@ -82,8 +83,13 @@ def create_app(cfg: Config) -> FastAPI:
     return app
 
 
-# Configure logging at import time so the module-level construction below — and
-# uvicorn --reload subprocesses, which import this module directly — log in the
-# configured format from the very first line. Idempotent with cli.main's call.
-configure_logging()
-app = create_app(load_config())
+# Configure logging + Sentry at import time so the module-level construction
+# below — and uvicorn --reload subprocesses, which import this module directly —
+# behave consistently however launched. Sentry must init before the FastAPI app
+# is built so its integration instruments the app. Load config once and apply
+# its [logging]/[sentry] values (env still wins). Idempotent with cli.main.
+configure_logging()  # bootstrap (env/auto) for any import-time logs
+_cfg = load_config()
+configure_logging(_cfg.log_format)
+configure_sentry(_cfg.sentry_dsn)
+app = create_app(_cfg)
