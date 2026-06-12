@@ -6,11 +6,14 @@ See docs/plans/2026-06-12-llm-output-quality-guards.md. The detector/retry is
 the whole fix, so these mock the chat layer (``summarize._chat``) to feed it the
 exact degenerate responses observed in production (the 14-token stub, the empty
 highlights list, prose-instead-of-JSON) and assert it retries and recovers."""
+import io
 import json
+import sys
 
 import pytest
+import structlog
 
-from podracer import summarize
+from podracer import logging_config, summarize
 from podracer.summarize import (
     Backend,
     Chapter,
@@ -234,3 +237,43 @@ def test_openrouter_constrains_provider_to_structured_output(monkeypatch):
     monkeypatch.setattr(summarize.httpx, "post", fake_post)
     summarize._chat_openrouter(BACKEND, "s", "u", {"type": "object"})
     assert captured["payload"]["provider"] == {"require_parameters": True}
+
+
+# --- retry warning event carries diagnostics -------------------------------
+
+def _capture_json_logs(monkeypatch, fn):
+    monkeypatch.setenv("PODRACER_LOG_FORMAT", "json")
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", buf)
+    monkeypatch.setattr(logging_config, "_configured_format", None)
+    structlog.reset_defaults()
+    logging_config.configure_logging()
+    fn()
+    return [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
+
+
+def test_degenerate_event_carries_provider_model_tokens_episode(monkeypatch):
+    # The 109241 highlights failure shape: a degenerate first response, then a
+    # clean retry. The warning must name the provider/model/tokens/episode so a
+    # regression is triageable from OpenSearch.
+    degenerate = summarize.ChatResult(content="here are the highlights ...", provider="Baidu",
+                                      finish_reason="stop", input_tokens=29390, output_tokens=8)
+    good = summarize.ChatResult(content=json.dumps({"summary": "A complete summary. " * 20}))
+    monkeypatch.setattr(summarize, "_chat", _replies(degenerate, good))
+
+    def run():
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(episode_id=5588)  # as summarize_episode/worker do
+        try:
+            _chat_checked(BACKEND, "s", "u", Summary, _check_summary)
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+    lines = _capture_json_logs(monkeypatch, run)
+    ev = next(r for r in lines if r.get("event") == "llm_degenerate_output")
+    assert ev["backend"] == "openrouter"
+    assert ev["model"] == "deepseek/deepseek-v4-flash"
+    assert ev["provider"] == "Baidu"
+    assert ev["input_tokens"] == 29390 and ev["output_tokens"] == 8
+    assert ev["reason"] == "invalid_json"
+    assert ev["episode_id"] == 5588  # auto-attached via the bound contextvar
