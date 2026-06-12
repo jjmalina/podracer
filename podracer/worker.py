@@ -5,6 +5,7 @@ import threading
 import time
 from datetime import UTC, datetime
 
+import sentry_sdk
 import structlog
 
 from podracer import logger
@@ -80,6 +81,7 @@ class Worker:
                 self._drain_queue()
             except Exception:
                 logger.exception("worker_iteration_failed")
+                sentry_sdk.capture_exception()
             self.shutdown.wait(timeout=drain_interval)
 
     # --- internals ---
@@ -102,6 +104,7 @@ class Worker:
                 # ride along in whatever commit happens next on this connection.
                 self.conn.rollback()
                 logger.exception("feed_sync_failed", podcast=podcast.title)
+                sentry_sdk.capture_exception()
         set_worker_last_sync(self.conn, _utcnow_iso())
 
     def _enqueue_new(self) -> None:
@@ -135,7 +138,12 @@ class Worker:
         # wipe anything else an outer scope may have bound).
         with structlog.contextvars.bound_contextvars(
             job_id=job.id, episode_id=job.episode_id, job_kind=job.kind,
-        ):
+        ), sentry_sdk.new_scope() as scope:
+            # Tag any Sentry event from this job so GlitchTip issues are
+            # filterable by episode/kind (no-op when Sentry isn't initialized).
+            scope.set_tag("job_kind", job.kind)
+            scope.set_tag("episode_id", str(job.episode_id))
+            scope.set_tag("job_id", str(job.id))
             logger.info("job_running", attempt=job.attempts + 1, max_attempts=job.max_attempts)
             try:
                 self._dispatch(job)
@@ -143,6 +151,7 @@ class Worker:
                 logger.info("job_done")
             except Exception as e:
                 logger.exception("job_failed", error=str(e))
+                sentry_sdk.capture_exception(e)
                 terminal = mark_job_failed(self.conn, job.id, str(e))
                 if terminal:
                     blocked = cascade_block_dependents(self.conn, job.id)

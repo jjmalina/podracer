@@ -54,6 +54,9 @@ class Config:
     # The PODRACER_LOG_FORMAT env var overrides this.
     log_format: str = "auto"
 
+    # Error reporting: Sentry/GlitchTip DSN (empty = off). SENTRY_DSN env overrides.
+    sentry_dsn: str | None = None
+
     # API keys
     hf_token: str | None = None
     openrouter_api_key: str | None = None
@@ -160,6 +163,9 @@ def load_config() -> Config:
         logging_cfg = data.get("logging", {})
         config.log_format = logging_cfg.get("format", config.log_format)
 
+        sentry = data.get("sentry", {})
+        config.sentry_dsn = sentry.get("dsn", config.sentry_dsn)
+
         keys = data.get("keys", {})
         config.hf_token = keys.get("hf_token")
         config.openrouter_api_key = keys.get("openrouter_api_key")
@@ -190,6 +196,7 @@ def load_config() -> Config:
     config.podcast_index_key = os.environ.get("PODCAST_INDEX_KEY", config.podcast_index_key)
     config.podcast_index_secret = os.environ.get("PODCAST_INDEX_SECRET", config.podcast_index_secret)
     config.log_format = os.environ.get("PODRACER_LOG_FORMAT", config.log_format)
+    config.sentry_dsn = os.environ.get("SENTRY_DSN", config.sentry_dsn)
 
     # Anchor relative db_path / media_dir against the config file's directory.
     # Absolute paths pass through unchanged (deployment uses absolute paths in

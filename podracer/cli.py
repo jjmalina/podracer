@@ -39,6 +39,7 @@ from podracer.process import (
     summarize_episode,
 )
 from podracer.search import search_podcasts
+from podracer.sentry_config import configure_sentry
 from podracer.summarize import PodcastSummary
 from podracer.summarize_cli import print_summary
 from podracer.transcribe import transcribe
@@ -52,9 +53,10 @@ def _config() -> Config:
     global _cfg
     if _cfg is None:
         _cfg = load_config()
-        # Re-apply the configured log format now that config.toml is loaded
-        # (the early configure_logging() in main() only had env/auto). env wins.
+        # Re-apply logging + Sentry now that config.toml is loaded (the early
+        # calls in main() only saw env). env still wins over the file values.
         configure_logging(_cfg.log_format)
+        configure_sentry(_cfg.sentry_dsn)
     return _cfg
 
 
@@ -479,6 +481,7 @@ def cmd_status(args):
 
 def main():
     configure_logging()
+    configure_sentry()
 
     parser = argparse.ArgumentParser(prog="podracer", description="Podcast knowledge platform")
     parser.add_argument("--json", action="store_true", help="Output JSON")
