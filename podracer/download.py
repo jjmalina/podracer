@@ -5,6 +5,10 @@ from urllib.parse import urlparse
 
 import httpx
 
+# Some podcast hosts (e.g. Buzzsprout) return 403 for requests with httpx's
+# default User-Agent. They accept a distinct app identifier, so send one.
+USER_AGENT = "podracer/0.1.0"
+
 
 def slugify(text: str) -> str:
     text = text.lower().strip()
@@ -27,7 +31,10 @@ def download_episode(audio_url: str, media_dir: str, podcast_title: str,
     if full_path.exists():
         return relative_path, full_path.stat().st_size
 
-    with httpx.stream("GET", audio_url, follow_redirects=True, timeout=600.0) as resp:
+    with httpx.stream(
+        "GET", audio_url, follow_redirects=True, timeout=600.0,
+        headers={"User-Agent": USER_AGENT},
+    ) as resp:
         resp.raise_for_status()
         total = int(resp.headers.get("content-length", 0))
         downloaded = 0
