@@ -734,3 +734,111 @@ article.result { display: flex; gap: 0.9rem; align-items: flex-start; }
 /* Podcast list table: keep the cover column tight */
 th.cover-col,
 td.cover-col { width: 40px; padding-right: 0.5rem; }
+
+/* ---------- home feed ---------- */
+
+.feed-status { margin: 1rem 0 1.25rem; }
+
+.feed-list {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--pr-line);
+}
+.feed-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 0.4rem;
+  border-bottom: 1px solid var(--pr-line);
+  transition: background 0.12s;
+}
+.feed-row:hover { background: var(--pr-surface); }
+.feed-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+.feed-show {
+  font-family: var(--pr-mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--pr-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-show:hover { color: var(--pr-accent); }
+.feed-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: var(--pr-text);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-row:hover .feed-title { color: var(--pr-accent); }
+.feed-row-meta {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.feed-time, .feed-dur {
+  font-family: var(--pr-mono);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+/* The published date is the primary timestamp (brighter); the episode length
+   is secondary (dimmed), with a hairline between them so they don't read as
+   one run of text. */
+.feed-time { color: var(--pr-text); }
+.feed-dur { color: var(--pr-muted); }
+.feed-dur + .feed-time {
+  margin-left: 0.7rem;
+  padding-left: 0.7rem;
+  border-left: 1px solid var(--pr-line-strong);
+}
+.feed-row-meta .badge { margin-left: 0.85rem; }
+.badge-running { --badge-dot: var(--pr-accent); color: var(--pr-accent); }
+
+.feed-empty { color: var(--pr-muted); margin-top: 1.5rem; }
+
+/* Hide the duration on narrow screens; time + status carry the row. */
+@media (max-width: 540px) {
+  .feed-dur { display: none; }
+  /* No duration → drop the divider so the date doesn't dangle one. */
+  .feed-dur + .feed-time { margin-left: 0; padding-left: 0; border-left: none; }
+}
+
+/* Pagination */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin: 2rem 0 1rem;
+  font-family: var(--pr-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.pager-status { color: var(--pr-muted); }
+.pager-link {
+  color: var(--pr-text);
+  border: 1px solid var(--pr-line);
+  border-radius: 2px;
+  padding: 0.3rem 0.7rem;
+  text-decoration: none;
+}
+a.pager-link:hover { color: var(--pr-accent); border-color: var(--pr-accent); }
+.pager-disabled {
+  color: var(--pr-line-strong);
+  border-color: var(--pr-line);
+  pointer-events: none;
+}

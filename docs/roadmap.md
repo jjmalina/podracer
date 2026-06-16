@@ -675,6 +675,11 @@ sidebar is collapsed.
   recent regardless of podcast (read or unread), filterable + sorted
   by published_at. Natural pair with the sidebar — sidebar for
   glanceable unread, page for browsing the firehose.
+  - **Update (2026-06-15):** this shipped as the home page `/`
+    (subscribed-only, status-filtered, paginated, newest-first) — see
+    `docs/plans/2026-06-15-home-feed.md`. What's left here is the
+    unread/read state and the sidebar itself; tracked in the
+    "Home feed: unread tracking + shows-by-recency" entry below.
 
 **Interaction with email notifications (#11).**
 - Both features rely on the same "episode just finished summarizing"
@@ -1167,3 +1172,47 @@ daemon.
   install: are credentials present? Does Deepgram return 200 on a
   trivial probe? Is OpenRouter reachable? Is the venv healthy?
   Catches misconfigurations after the fact.
+
+---
+
+## Home feed: unread tracking + shows-by-recency
+
+**Status.** The home feed itself shipped — `/` is now a
+reverse-chronological, paginated list of episodes across subscribed
+shows, defaulting to summarized, with `summarized` / `pending` / `all`
+status chips (see `docs/plans/2026-06-15-home-feed.md`). This entry
+captures the follow-ups that fall out of having it.
+
+**Problem.** The feed shows recent episodes but has no notion of which
+ones you've already opened, so it can't answer "what's new since I last
+looked." And it only solves the episode-level view — the `/podcasts`
+grid is still alphabetical, so the shows you're actively following don't
+float to the top.
+
+**Sketch.**
+- **Unread/read tracking.** `episodes.viewed_at TEXT` (NULL until
+  opened), set in the `episode_detail` route on first GET; an "unread"
+  marker on feed rows where `viewed_at IS NULL AND status = 'summarized'`,
+  plus an "unread" chip beside the existing status chips. This is the
+  precursor to — and shares the `viewed_at` mechanism with — the
+  "In-app notifications sidebar" entry above.
+- **Shows-by-recency.** Sort the `/podcasts` grid by latest-episode
+  recency instead of title: `get_all_podcasts` grows an
+  `ORDER BY MAX(COALESCE(e.published_at, e.created_at)) DESC`. One-line
+  query change noted in the feed plan's follow-ups.
+- **Play from the feed.** Once the inline audio player lands (separate
+  entry), a ▸ on each row starts playback without the detail-page hop.
+- **Keyset pagination.** The feed uses offset paging — fine at personal
+  scale. If the archive ever passes tens of thousands of episodes,
+  switch to keyset on `(recency, id)`; the existing
+  `idx_episodes_recency` already orders that way.
+
+**Open questions.**
+- Once read state exists, should the default flip from "summarized" to
+  "unread summarized"? Probably — that's the truer "what's new" view.
+- **Stale-job hygiene.** Already-summarized episodes can carry orphaned
+  queued/running jobs (the episode-5578 case). The feed hides them, but
+  they still sit in `jobs` and would be reprocessed if the worker runs.
+  A small sweep — "cancel active jobs whose episode is already
+  summarized" — keeps the queue honest. Belongs with the job-management
+  entry.

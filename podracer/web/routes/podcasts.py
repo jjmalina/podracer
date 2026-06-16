@@ -31,11 +31,6 @@ def _format_duration(seconds: int | None) -> str:
     return f"{m}m"
 
 
-@router.get("/")
-def index():
-    return RedirectResponse(url="/podcasts")
-
-
 @router.get("/podcasts")
 def podcast_list(request: Request, view: str = "grid", db: sqlite3.Connection = Depends(get_db)):
     podcasts = get_all_podcasts(db)

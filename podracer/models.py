@@ -31,6 +31,21 @@ class Episode(BaseModel):
     created_at: str | None = None
 
 
+class FeedItem(BaseModel):
+    """A row in the home feed: an episode joined with its show's title and any
+    active job, so the feed template renders without per-row follow-up queries."""
+    id: int
+    podcast_id: int
+    title: str
+    podcast_title: str
+    published_at: str | None = None
+    created_at: str | None = None
+    recency: str | None = None  # COALESCE(published_at, created_at) — the sort key
+    status: str = "pending"
+    duration_seconds: int | None = None
+    active_kind: str | None = None  # kind of the in-flight job, if any
+
+
 class Transcript(BaseModel):
     id: int
     episode_id: int
