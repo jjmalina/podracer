@@ -1,13 +1,18 @@
 {% if results %}
 <p class="result-count">{{ results | length }} result(s)</p>
 {% for r in results %}
-<article>
-  <header><strong>{{ r.title }}</strong></header>
-  <p>{{ r.author or "" }}</p>
-  {% if r.description %}<p>{{ r.description[:200] }}</p>{% endif %}
-  <footer>
-    <a href="/search/browse?feed_url={{ r.feed_url | urlencode }}" role="button" class="outline">Browse Episodes</a>
-  </footer>
+<article class="result">
+  <img class="cover cover-sm" alt="" loading="lazy"
+       src="{{ r.artwork_url or '/static/cover-fallback.svg' }}"
+       onerror="this.onerror=null;this.src='/static/cover-fallback.svg'">
+  <div class="result-body">
+    <header><strong>{{ r.title }}</strong></header>
+    <p>{{ r.author or "" }}</p>
+    {% if r.description %}<p>{{ r.description[:200] }}</p>{% endif %}
+    <footer>
+      <a href="/search/browse?feed_url={{ r.feed_url | urlencode }}" role="button" class="outline">Browse Episodes</a>
+    </footer>
+  </div>
 </article>
 {% endfor %}
 {% else %}

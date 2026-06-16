@@ -1,13 +1,22 @@
 import re
+import sqlite3
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+import sentry_sdk
+
+from podracer import logger
+from podracer.db import set_podcast_artwork_path
+from podracer.models import Podcast
 
 # Some podcast hosts (e.g. Buzzsprout) return 403 for requests with httpx's
 # default User-Agent. They accept a distinct app identifier, so send one.
 USER_AGENT = "podracer/0.1.0"
+
+# Image types whose extension we preserve; anything else is stored as .jpg.
+ARTWORK_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 def slugify(text: str) -> str:
@@ -54,3 +63,44 @@ def download_episode(audio_url: str, media_dir: str, podcast_title: str,
             print(file=sys.stderr)
 
     return relative_path, full_path.stat().st_size
+
+
+def download_artwork(artwork_url: str, media_dir: str, podcast_title: str) -> str:
+    """Download a podcast cover into media_dir; return its media-relative path.
+
+    Stored next to the podcast's audio as `{slug}/cover.{ext}`, fetched with the
+    app User-Agent (some hosts 403 the default one — see USER_AGENT)."""
+    ext = Path(urlparse(artwork_url).path).suffix.lower()
+    if ext not in ARTWORK_EXTS:
+        ext = ".jpg"
+    relative_path = f"{slugify(podcast_title)}/cover{ext}"
+    full_path = Path(media_dir) / relative_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+
+    resp = httpx.get(
+        artwork_url, follow_redirects=True, timeout=30.0,
+        headers={"User-Agent": USER_AGENT},
+    )
+    resp.raise_for_status()
+    full_path.write_bytes(resp.content)
+    return relative_path
+
+
+def ensure_artwork_cached(conn: sqlite3.Connection, podcast: Podcast, media_dir: str) -> bool:
+    """Cache a podcast's cover locally if it isn't already; return True when a
+    usable local copy exists afterwards.
+
+    Never raises: a dead or slow image host must not break a subscribe or a feed
+    sync — the caller just falls back to the generated placeholder tile."""
+    if not podcast.artwork_url:
+        return False
+    if podcast.artwork_path and (Path(media_dir) / podcast.artwork_path).exists():
+        return True
+    try:
+        relative_path = download_artwork(podcast.artwork_url, media_dir, podcast.title)
+    except Exception:
+        logger.exception("artwork_cache_failed", podcast=podcast.title)
+        sentry_sdk.capture_exception()
+        return False
+    set_podcast_artwork_path(conn, podcast.id, relative_path)
+    return True

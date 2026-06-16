@@ -1,14 +1,19 @@
 {% extends "base.html" %}
 {% block title %}{{ podcast.title }} — podracer{% endblock %}
 {% block content %}
-<p class="eyebrow">Podcast</p>
-<hgroup>
-  <h1>{{ podcast.title }}</h1>
-  <p>{{ podcast.author or "" }}{% if podcast.subscribed %} · <span class="badge badge-sub">Subscribed</span>{% endif %}</p>
-</hgroup>
-{% if podcast.description %}
-<p>{{ podcast.description }}</p>
-{% endif %}
+<div class="podcast-head">
+  <img class="cover cover-hero" src="/podcasts/{{ podcast.id }}/artwork" alt="" width="140" height="140">
+  <div class="podcast-head-text">
+    <p class="eyebrow">Podcast</p>
+    <hgroup>
+      <h1>{{ podcast.title }}</h1>
+      <p>{{ podcast.author or "" }}{% if podcast.subscribed %} · <span class="badge badge-sub">Subscribed</span>{% endif %}</p>
+    </hgroup>
+    {% if podcast.description %}
+    <p>{{ podcast.description }}</p>
+    {% endif %}
+  </div>
+</div>
 
 {% if podcast.subscribed %}
 <form method="post" action="/podcasts/{{ podcast.id }}/unsubscribe" style="display:inline">

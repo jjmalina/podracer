@@ -1,14 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ meta.title }} — podracer{% endblock %}
 {% block content %}
-<p class="eyebrow">Feed preview</p>
-<hgroup>
-  <h1>{{ meta.title }}</h1>
-  <p>{{ meta.author or "" }}</p>
-</hgroup>
-{% if meta.description %}
-<p>{{ meta.description }}</p>
-{% endif %}
+<div class="podcast-head">
+  <img class="cover cover-hero" alt="" width="140" height="140"
+       src="{{ meta.artwork_url or '/static/cover-fallback.svg' }}"
+       onerror="this.onerror=null;this.src='/static/cover-fallback.svg'">
+  <div class="podcast-head-text">
+    <p class="eyebrow">Feed preview</p>
+    <hgroup>
+      <h1>{{ meta.title }}</h1>
+      <p>{{ meta.author or "" }}</p>
+    </hgroup>
+    {% if meta.description %}
+    <p>{{ meta.description }}</p>
+    {% endif %}
+  </div>
+</div>
 
 <form method="post" action="/search/subscribe?feed_url={{ feed_url | urlencode }}" style="display:inline">
   <button type="submit">Subscribe</button>

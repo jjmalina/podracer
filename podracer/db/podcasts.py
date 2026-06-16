@@ -66,3 +66,11 @@ def update_podcast_synced(conn: sqlite3.Connection, podcast_id: int) -> None:
         (podcast_id,),
     )
     conn.commit()
+
+
+def set_podcast_artwork_path(conn: sqlite3.Connection, podcast_id: int, path: str) -> None:
+    conn.execute(
+        "UPDATE podcasts SET artwork_path = ? WHERE id = ?",
+        (path, podcast_id),
+    )
+    conn.commit()

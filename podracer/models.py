@@ -7,6 +7,7 @@ class Podcast(BaseModel):
     author: str | None = None
     feed_url: str
     artwork_url: str | None = None
+    artwork_path: str | None = None
     description: str | None = None
     subscribed: bool = False
     subscribed_at: str | None = None

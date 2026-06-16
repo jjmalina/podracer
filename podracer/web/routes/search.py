@@ -3,7 +3,14 @@ import sqlite3
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from podracer.db import subscribe, update_podcast_synced, upsert_episode, upsert_podcast
+from podracer.db import (
+    get_podcast,
+    subscribe,
+    update_podcast_synced,
+    upsert_episode,
+    upsert_podcast,
+)
+from podracer.download import ensure_artwork_cached
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.process import queue_latest_unprocessed_episode
 from podracer.search import search_podcasts
@@ -68,6 +75,12 @@ def subscribe_from_search(request: Request, feed_url: str, db: sqlite3.Connectio
         upsert_episode(db, podcast_id, ep)
     db.commit()
     update_podcast_synced(db, podcast_id)
+
+    # Copy the cover now (primary trigger) so the podcast page shows it
+    # immediately; the worker sync is the backstop if this fetch fails.
+    podcast = get_podcast(db, podcast_id)
+    if podcast:
+        ensure_artwork_cached(db, podcast, cfg.media_dir)
 
     queue_latest_unprocessed_episode(db, cfg, podcast_id)
 
