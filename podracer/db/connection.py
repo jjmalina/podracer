@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS podcasts (
     author TEXT,
     feed_url TEXT NOT NULL UNIQUE,
     artwork_url TEXT,
+    artwork_path TEXT,
     description TEXT,
     subscribed INTEGER NOT NULL DEFAULT 0,
     subscribed_at TEXT,
@@ -110,6 +111,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "UPDATE podcasts SET subscribed_at = datetime('now') "
             "WHERE subscribed = 1 AND subscribed_at IS NULL"
         )
+
+    if "artwork_path" not in pc_cols:
+        conn.execute("ALTER TABLE podcasts ADD COLUMN artwork_path TEXT")
 
     # Decode HTML entities in stored text fields. Earlier feed-ingest stripped
     # tags but left entities (&amp;, &nbsp;) as literal characters. Idempotent:

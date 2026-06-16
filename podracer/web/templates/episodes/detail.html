@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 {% block title %}{{ episode.title }} — podracer{% endblock %}
 {% block content %}
-<p class="eyebrow">Episode</p>
-<hgroup>
-  <h1>{{ episode.title }}</h1>
-  <p>
-    <a href="/podcasts/{{ podcast.id }}">{{ podcast.title }}</a>
-    {% if episode.published_at %} · {{ episode.published_at[:10] }}{% endif %}
-    {% if episode.duration_seconds %} · {{ format_duration(episode.duration_seconds) }}{% endif %}
-    · <span class="badge badge-{{ episode.status }}">{{ episode.status }}</span>
-  </p>
-</hgroup>
+<div class="episode-head">
+  <a href="/podcasts/{{ podcast.id }}" class="cover-link">
+    <img class="cover cover-sm" src="/podcasts/{{ podcast.id }}/artwork" alt="" width="56" height="56">
+  </a>
+  <div class="episode-head-text">
+    <p class="eyebrow">Episode</p>
+    <hgroup>
+      <h1>{{ episode.title }}</h1>
+      <p>
+        <a href="/podcasts/{{ podcast.id }}">{{ podcast.title }}</a>
+        {% if episode.published_at %} · {{ episode.published_at[:10] }}{% endif %}
+        {% if episode.duration_seconds %} · {{ format_duration(episode.duration_seconds) }}{% endif %}
+        · <span class="badge badge-{{ episode.status }}">{{ episode.status }}</span>
+      </p>
+    </hgroup>
+  </div>
+</div>
 
 {% if flash == "enqueued" %}
 <p role="alert" class="flash">Episode enqueued. The worker will pick it up on its next iteration.</p>

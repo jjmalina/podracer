@@ -4,29 +4,95 @@
 <p class="eyebrow">Library</p>
 <h1>Podcasts</h1>
 {% if podcasts %}
-<form method="post" action="/podcasts/sync-all" style="display:inline">
-  <button type="submit" class="outline">Sync All</button>
-</form>
-<table>
-  <thead>
-    <tr>
-      <th>Title</th>
-      <th>Author</th>
-      <th>Episodes</th>
-      <th>Subscribed</th>
-    </tr>
-  </thead>
-  <tbody>
+<div class="library-bar">
+  <form method="post" action="/podcasts/sync-all" style="display:inline">
+    <button type="submit" class="outline">Sync All</button>
+  </form>
+  <div class="view-toggle" aria-label="View">
+    <button type="button" class="view-btn outline {% if view == 'grid' %}active{% endif %}"
+            data-view="grid" aria-label="Grid view" title="Grid view">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+        <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/>
+        <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
+      </svg>
+    </button>
+    <button type="button" class="view-btn outline {% if view == 'table' %}active{% endif %}"
+            data-view="table" aria-label="Table view" title="Table view">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+        <rect x="1" y="2" width="14" height="2.4" rx="1"/><rect x="1" y="6.8" width="14" height="2.4" rx="1"/>
+        <rect x="1" y="11.6" width="14" height="2.4" rx="1"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div class="pod-views" data-view="{{ view }}">
+  <div class="pod-grid">
     {% for p in podcasts %}
-    <tr>
-      <td><a href="/podcasts/{{ p.podcast.id }}">{{ p.podcast.title }}</a></td>
-      <td>{{ p.podcast.author or "" }}</td>
-      <td>{{ p.episode_count }}</td>
-      <td>{% if p.podcast.subscribed %}<span class="badge badge-sub">Yes</span>{% endif %}</td>
-    </tr>
+    <a class="pod-tile" href="/podcasts/{{ p.podcast.id }}">
+      <img class="cover pod-tile-cover" src="/podcasts/{{ p.podcast.id }}/artwork"
+           alt="" loading="lazy" width="300" height="300">
+      <div class="pod-tile-meta">
+        <span class="pod-tile-title">{{ p.podcast.title }}</span>
+        <span class="pod-tile-sub">
+          <span class="pod-led {% if p.podcast.subscribed %}pod-led-on{% endif %}"
+                title="{% if p.podcast.subscribed %}Subscribed{% else %}Not subscribed{% endif %}"></span>
+          {{ p.podcast.author or "—" }}{% if p.episode_count %} · {{ p.episode_count }} eps{% endif %}
+        </span>
+      </div>
+    </a>
     {% endfor %}
-  </tbody>
-</table>
+  </div>
+
+  <table class="pod-table">
+    <thead>
+      <tr>
+        <th class="cover-col"></th>
+        <th>Title</th>
+        <th>Author</th>
+        <th>Episodes</th>
+        <th>Subscribed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in podcasts %}
+      <tr>
+        <td class="cover-col"><a href="/podcasts/{{ p.podcast.id }}"><img class="cover cover-row" src="/podcasts/{{ p.podcast.id }}/artwork" alt="" width="40" height="40"></a></td>
+        <td><a href="/podcasts/{{ p.podcast.id }}">{{ p.podcast.title }}</a></td>
+        <td>{{ p.podcast.author or "" }}</td>
+        <td>{{ p.episode_count }}</td>
+        <td>{% if p.podcast.subscribed %}<span class="badge badge-sub">Yes</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  (function () {
+    var views = document.querySelector('.pod-views');
+    if (!views) return;
+    var btns = document.querySelectorAll('.view-btn');
+    function setView(v) {
+      if (v !== 'grid' && v !== 'table') v = 'grid';
+      views.dataset.view = v;
+      try { localStorage.setItem('podracer-podcast-view', v); } catch (e) {}
+      btns.forEach(function (b) { b.classList.toggle('active', b.dataset.view === v); });
+    }
+    // A ?view= param wins (shareable link); otherwise restore the saved choice.
+    var urlView = new URLSearchParams(location.search).get('view');
+    if (urlView) {
+      setView(urlView);
+    } else {
+      var saved = null;
+      try { saved = localStorage.getItem('podracer-podcast-view'); } catch (e) {}
+      if (saved) setView(saved);
+    }
+    btns.forEach(function (b) {
+      b.addEventListener('click', function () { setView(b.dataset.view); });
+    });
+  })();
+</script>
 {% else %}
 <p>No podcasts yet. <a href="/search">Search</a> for one or use the CLI to add podcasts.</p>
 {% endif %}

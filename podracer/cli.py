@@ -30,7 +30,7 @@ from podracer.db import (
     upsert_episode,
     upsert_podcast,
 )
-from podracer.download import download_episode
+from podracer.download import download_episode, ensure_artwork_cached
 from podracer.feed import fetch_episodes, fetch_feed_metadata
 from podracer.logging_config import configure_logging
 from podracer.process import (
@@ -479,6 +479,37 @@ def cmd_status(args):
     print(f"Subscribed podcasts: {podcasts}")
 
 
+def cmd_backfill_artwork(args):
+    conn = _db()
+    cfg = _config()
+    cached = skipped = failed = 0
+    for p in get_subscribed_podcasts(conn):
+        # Recover a missing artwork_url from the feed (older subscriptions, or a
+        # feed that didn't expose <image> when first subscribed).
+        if not p.artwork_url:
+            try:
+                meta = fetch_feed_metadata(p.feed_url)
+            except Exception:
+                logger.exception("artwork_backfill_meta_failed", podcast=p.title)
+                meta = None
+            if meta and meta.artwork_url:
+                upsert_podcast(conn, p.title, p.author, p.feed_url,
+                               meta.artwork_url, p.description)
+                p = get_podcast(conn, p.id)
+        if not p or not p.artwork_url:
+            skipped += 1
+            continue
+        if ensure_artwork_cached(conn, p, cfg.media_dir):
+            cached += 1
+        else:
+            failed += 1
+
+    if args.json:
+        print(json.dumps({"cached": cached, "skipped": skipped, "failed": failed}))
+    else:
+        print(f"Artwork backfill: {cached} cached, {skipped} skipped (no art), {failed} failed.")
+
+
 def main():
     configure_logging()
     configure_sentry()
@@ -565,6 +596,10 @@ def main():
 
     p_status = subparsers.add_parser("status", help="Show queue state for ops/debugging")
     p_status.set_defaults(func=cmd_status)
+
+    p_backfill_artwork = subparsers.add_parser(
+        "backfill-artwork", help="Cache cover art for subscribed podcasts")
+    p_backfill_artwork.set_defaults(func=cmd_backfill_artwork)
 
     args = parser.parse_args()
     if args.verbose:

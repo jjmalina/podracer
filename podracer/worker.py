@@ -25,6 +25,7 @@ from podracer.db import (
     update_podcast_synced,
     upsert_episode,
 )
+from podracer.download import ensure_artwork_cached
 from podracer.feed import fetch_episodes
 from podracer.models import Job
 from podracer.process import summarize_episode, transcribe_episode
@@ -98,6 +99,9 @@ class Worker:
                 # One transaction per podcast: update_podcast_synced commits
                 # the upserts and the last_synced_at bump together.
                 update_podcast_synced(self.conn, podcast.id)
+                # Backstop the subscribe-time copy: heal any podcast whose cover
+                # wasn't cached yet (host was down, subscribed before this landed).
+                ensure_artwork_cached(self.conn, podcast, self.cfg.media_dir)
                 logger.info("feed_synced", podcast=podcast.title, episodes=len(episodes))
             except Exception:
                 # Drop any partial batch — without this, pending upserts would
