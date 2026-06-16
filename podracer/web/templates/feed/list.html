@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Feed — podracer{% endblock %}
+{% block content %}
+<p class="eyebrow">Feed</p>
+<h1>Recent episodes</h1>
+
+<nav class="feed-status" aria-label="Status">
+  <ul>
+    {% for s in statuses %}
+    <li><a href="/?status={{ s }}" {% if status == s %}class="active-filter"{% endif %}>{{ s }}</a></li>
+    {% endfor %}
+    <li><a href="/?status=all" {% if status == "all" %}class="active-filter"{% endif %}>all</a></li>
+  </ul>
+</nav>
+
+{% if items %}
+<ul class="feed-list">
+  {% for it in items %}
+  <li class="feed-row">
+    <a class="cover-link" href="/podcasts/{{ it.podcast_id }}" tabindex="-1">
+      <img class="cover cover-row" src="/podcasts/{{ it.podcast_id }}/artwork"
+           alt="" loading="lazy" width="40" height="40">
+    </a>
+    <div class="feed-row-body">
+      <a class="feed-show" href="/podcasts/{{ it.podcast_id }}">{{ it.podcast_title }}</a>
+      <a class="feed-title" href="/episodes/{{ it.id }}">{{ it.title }}</a>
+    </div>
+    <div class="feed-row-meta">
+      {% if it.duration_seconds %}<span class="feed-dur">{{ format_duration(it.duration_seconds) }}</span>{% endif %}
+      <span class="feed-time">{{ relative_time(it.recency) }}</span>
+      {# When a specific status is selected every row shares it, so only show the
+         badge in the 'all' view — or whenever a job is actively running. A
+         summarized episode is terminal: a leftover queued/running job is stale,
+         so don't let it render a contradictory 'processing' badge. #}
+      {% if it.active_kind and it.status != "summarized" %}
+        <span class="badge badge-running">{{ it.active_kind }}…</span>
+      {% elif status == "all" %}
+        <span class="badge badge-{{ it.status }}">{{ it.status }}</span>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pagination">
+  {% if page > 1 %}
+  <a class="pager-link" href="/?status={{ status }}&amp;page={{ page - 1 }}">‹ Newer</a>
+  {% else %}
+  <span class="pager-link pager-disabled">‹ Newer</span>
+  {% endif %}
+  <span class="pager-status">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}
+  <a class="pager-link" href="/?status={{ status }}&amp;page={{ page + 1 }}">Older ›</a>
+  {% else %}
+  <span class="pager-link pager-disabled">Older ›</span>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% else %}
+<p class="feed-empty">
+  No {% if status != "all" %}{{ status }} {% endif %}episodes from your
+  <a href="/podcasts">subscribed shows</a> yet.
+</p>
+{% endif %}
+{% endblock %}

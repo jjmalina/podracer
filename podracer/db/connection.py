@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_depends_on ON jobs(depends_on_job_id);
 
+-- Home feed ordering: newest episode first across all shows. Expression index
+-- on the COALESCE sort key so deep pagination stays cheap.
+CREATE INDEX IF NOT EXISTS idx_episodes_recency
+    ON episodes(COALESCE(published_at, created_at) DESC, id DESC);
+
 -- One active (queued/running) job per (episode, kind).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_unique
     ON jobs(episode_id, kind) WHERE status IN ('queued', 'running');

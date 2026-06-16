@@ -12,9 +12,11 @@ from podracer.db.connection import (
     set_config,
 )
 from podracer.db.episodes import (
+    count_recent_episodes,
     get_episode,
     get_episode_count,
     get_episodes,
+    get_recent_episodes,
     update_episode_download,
     upsert_episode,
 )
@@ -73,7 +75,7 @@ __all__ = [
     "set_podcast_artwork_path",
     # episodes
     "upsert_episode", "get_episode", "get_episodes", "get_episode_count",
-    "update_episode_download",
+    "update_episode_download", "get_recent_episodes", "count_recent_episodes",
     # transcripts
     "save_transcript", "get_transcript",
     # summaries
