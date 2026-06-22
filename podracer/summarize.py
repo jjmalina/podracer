@@ -154,13 +154,28 @@ listener would want to remember. Each highlight is one of two kinds:
 - "opinion": a distinct opinion, thesis, or argument specific to one \
 speaker — their particular perspective rather than group consensus.
 
+Capture concrete, actionable specifics, not vague gestures. When a speaker \
+states something precise — a number, threshold, date, name, level, or a \
+condition or recommendation with its qualifiers ("X holds only if Y stays \
+above Z") — put those particulars in the highlight text rather than \
+generalizing them away into "they discussed X." Never invent numbers, figures, \
+or claims that are not in the transcript.
+
+Cover the episode at an even density from start to finish. Information-dense \
+stretches — detailed technical discussion, rapid lists of facts, data, or \
+recommendations — are easy to under-cover relative to looser narrative \
+discussion; give them proportionate attention rather than collapsing a long \
+substantive segment into one or two highlights. As a rough guide, expect about \
+one highlight per few minutes of substantive content; for a long or dense \
+episode that is typically 25-40 highlights, but scale to the actual substance \
+— do not pad thin segments and do not starve dense ones.
+
 For each highlight provide: the text, the kind (exactly "takeaway" or \
 "opinion"), the timestamp (HH:MM:SS) where it appears, and the real name of \
 the speaker who expressed it (using the speaker key). Do not record the same \
 point twice — if something is both a notable takeaway and a speaker's opinion, \
-pick the single kind that fits best and list it once. Aim for 15-25 highlights \
-covering the full episode from start to finish, across all major speakers. \
-Ignore advertisement and sponsor segments entirely."""
+pick the single kind that fits best and list it once. Cover all major \
+speakers. Ignore advertisement and sponsor segments entirely."""
 
 
 class SpeakerIdentification(BaseModel):
@@ -475,8 +490,28 @@ def _chat_vllm(backend: Backend, system: str, user: str, schema: dict,
                       input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
 
 
+# Providers that advertise response_format.json_schema support (so they pass
+# require_parameters) but return prose anyway — never route to them. Baidu was
+# observed returning prose (invalid_json) on every retry for multiple calls,
+# discarding their output. Add a provider here once it proves it can't be
+# trusted with structured output.
+_DENYLISTED_PROVIDERS = ["Baidu"]
+
+
 def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
-                     repair: bool = False) -> ChatResult:
+                     repair: bool = False,
+                     ignore_providers: list[str] | None = None) -> ChatResult:
+    # Only route to providers that honor response_format.json_schema. This kills
+    # most prose-instead-of-JSON responses at the source — they came from
+    # providers that silently ignored the structured-output request. On top of
+    # that we always exclude _DENYLISTED_PROVIDERS (known structured-output
+    # liars), plus any `ignore_providers` the retry loop blacklists after a
+    # provider produces degenerate output mid-call.
+    ignored = list(_DENYLISTED_PROVIDERS)
+    ignored += [p for p in (ignore_providers or []) if p not in ignored]
+    provider: dict = {"require_parameters": True}
+    if ignored:
+        provider["ignore"] = ignored
     payload = {
         "model": backend.model,
         "messages": [
@@ -489,11 +524,7 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
             "type": "json_schema",
             "json_schema": {"name": "response", "strict": True, "schema": schema},
         },
-        # Only route to providers that honor response_format.json_schema. This
-        # kills most of the prose-instead-of-JSON responses at the source —
-        # they came from providers that silently ignored the structured-output
-        # request. (Pair with the retry below as a backstop.)
-        "provider": {"require_parameters": True},
+        "provider": provider,
     }
     headers = {"Authorization": f"Bearer {backend.api_key}"}
 
@@ -532,11 +563,13 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
 
 
 def _chat(backend: Backend, system: str, user: str, schema: dict,
-          repair: bool = False) -> ChatResult:
+          repair: bool = False, ignore_providers: list[str] | None = None) -> ChatResult:
     if backend.name == "vllm":
         return _chat_vllm(backend, system, user, schema, repair)
     if backend.name == "openrouter":
-        return _chat_openrouter(backend, system, user, schema, repair)
+        return _chat_openrouter(backend, system, user, schema, repair, ignore_providers)
+    # ollama/vllm are single-backend: there is no provider to route around, so
+    # ignore_providers is openrouter-only.
     return _chat_ollama(backend, system, user, schema, repair)
 
 
@@ -559,9 +592,14 @@ def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_
     schema = model_cls.model_json_schema()
     best: M | None = None
     best_key: int | None = None
+    # Providers that produced degenerate output this call — excluded from
+    # subsequent attempts so a repeat-offender (e.g. one that ignores the
+    # json_schema request and returns prose) isn't re-rolled onto every retry.
+    ignore_providers: list[str] = []
     for attempt in range(_MAX_LLM_ATTEMPTS):
         is_last = attempt == _MAX_LLM_ATTEMPTS - 1
-        result = _chat(backend, system, user, schema, repair=is_last)
+        result = _chat(backend, system, user, schema, repair=is_last,
+                       ignore_providers=ignore_providers or None)
         model: M | None = None
         reason: str | None = None
         try:
@@ -582,6 +620,8 @@ def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_
                        backend=backend.name, model=backend.model, provider=result.provider,
                        finish_reason=result.finish_reason,
                        input_tokens=result.input_tokens, output_tokens=result.output_tokens)
+        if result.provider and result.provider not in ignore_providers:
+            ignore_providers.append(result.provider)
         if model is not None:
             key = prefer(model) if prefer else attempt
             if best_key is None or key > best_key:

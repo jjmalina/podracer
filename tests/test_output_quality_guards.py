@@ -236,7 +236,48 @@ def test_openrouter_constrains_provider_to_structured_output(monkeypatch):
 
     monkeypatch.setattr(summarize.httpx, "post", fake_post)
     summarize._chat_openrouter(BACKEND, "s", "u", {"type": "object"})
-    assert captured["payload"]["provider"] == {"require_parameters": True}
+    # Baidu is always denied (structured-output liar), even with no retry-level
+    # exclusions yet.
+    assert captured["payload"]["provider"] == {"require_parameters": True, "ignore": ["Baidu"]}
+
+
+def test_openrouter_merges_denylist_with_retry_exclusions(monkeypatch):
+    # provider.ignore is the union of the always-on denylist and the providers
+    # the retry loop blacklists mid-call, de-duplicated.
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                          "usage": {}, "provider": "DeepInfra"})
+
+    monkeypatch.setattr(summarize.httpx, "post", fake_post)
+    summarize._chat_openrouter(BACKEND, "s", "u", {"type": "object"},
+                               ignore_providers=["Baidu", "Wafer"])
+    assert captured["payload"]["provider"] == {"require_parameters": True,
+                                               "ignore": ["Baidu", "Wafer"]}
+
+
+def test_degenerate_provider_excluded_on_retry(monkeypatch):
+    # Backstop for any provider that returns prose mid-call (not just the
+    # statically denied ones): the retry must blacklist it rather than re-roll
+    # onto the same offender.
+    seen_ignores = []
+    replies = iter([
+        summarize.ChatResult(content="prose, not json", provider="Wafer"),
+        summarize.ChatResult(content=json.dumps({"summary": "A complete summary. " * 20}),
+                             provider="DeepInfra"),
+    ])
+
+    def chat(backend, system, user, schema, repair=False, ignore_providers=None):
+        seen_ignores.append(ignore_providers)
+        return next(replies)
+
+    monkeypatch.setattr(summarize, "_chat", chat)
+    model, passed = _chat_checked(BACKEND, "s", "u", Summary, _check_summary)
+    assert passed
+    assert seen_ignores[0] is None        # first attempt: nothing excluded yet
+    assert seen_ignores[1] == ["Wafer"]   # retry routes around the offender
 
 
 # --- retry warning event carries diagnostics -------------------------------
