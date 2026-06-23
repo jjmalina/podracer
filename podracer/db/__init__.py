@@ -47,9 +47,11 @@ from podracer.db.jobs import (
 )
 from podracer.db.podcasts import (
     get_all_podcasts,
+    get_all_tags,
     get_podcast,
     get_subscribed_podcasts,
     set_podcast_artwork_path,
+    set_podcast_tags,
     subscribe,
     unsubscribe,
     update_podcast_synced,
@@ -72,7 +74,7 @@ __all__ = [
     # podcasts
     "upsert_podcast", "subscribe", "unsubscribe", "get_podcast",
     "get_subscribed_podcasts", "get_all_podcasts", "update_podcast_synced",
-    "set_podcast_artwork_path",
+    "set_podcast_artwork_path", "set_podcast_tags", "get_all_tags",
     # episodes
     "upsert_episode", "get_episode", "get_episodes", "get_episode_count",
     "update_episode_download", "get_recent_episodes", "count_recent_episodes",

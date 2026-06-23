@@ -56,12 +56,26 @@ def update_episode_download(
     conn.commit()
 
 
+# Shared feed predicate, used by both the listing and the count query so their
+# filters can't drift. Param order: subscribed_only(int), status, status,
+# topic, topic. (? IS NULL) disables a filter; the topic clause matches shows
+# carrying that tag (t.name is COLLATE NOCASE so case doesn't matter).
+_FEED_WHERE = """
+    FROM episodes e
+    JOIN podcasts p ON p.id = e.podcast_id
+    WHERE (? = 0 OR p.subscribed = 1)
+      AND (? IS NULL OR e.status = ?)
+      AND (? IS NULL OR EXISTS (
+            SELECT 1 FROM podcast_tags pt JOIN tags t ON t.id = pt.tag_id
+            WHERE pt.podcast_id = p.id AND t.name = ?))
+"""
+
 # Newest episodes across all shows (the home feed). The active-job subselect
 # is a correlated LEFT-style lookup — a row appears even when no job exists.
 # Sort key COALESCE(published_at, created_at) is never NULL (created_at has a
 # NOT NULL default); the id DESC tiebreak keeps paging windows stable when two
 # episodes share a timestamp.
-_RECENT_SELECT = """
+_RECENT_SELECT = f"""
     SELECT
         e.id AS id,
         e.podcast_id AS podcast_id,
@@ -75,10 +89,7 @@ _RECENT_SELECT = """
         (SELECT j.kind FROM jobs j
            WHERE j.episode_id = e.id AND j.status IN ('queued', 'running')
            ORDER BY j.id LIMIT 1) AS active_kind
-    FROM episodes e
-    JOIN podcasts p ON p.id = e.podcast_id
-    WHERE (? = 0 OR p.subscribed = 1)
-      AND (? IS NULL OR e.status = ?)
+    {_FEED_WHERE}
     ORDER BY recency DESC, e.id DESC
     LIMIT ? OFFSET ?
 """
@@ -88,9 +99,9 @@ def _feed_item_from_row(row: sqlite3.Row) -> FeedItem:
     return FeedItem(**{k: row[k] for k in row.keys()})
 
 
-def _status_filter(status: str | None) -> str | None:
-    """None or 'all' means no status filter; anything else is an exact match."""
-    return status if status and status != "all" else None
+def _none_if_all(value: str | None) -> str | None:
+    """None or 'all' means no filter; anything else is an exact match."""
+    return value if value and value != "all" else None
 
 
 def get_recent_episodes(
@@ -100,26 +111,31 @@ def get_recent_episodes(
     offset: int = 0,
     subscribed_only: bool = True,
     status: str | None = None,
+    topic: str | None = None,
 ) -> list[FeedItem]:
     """Episodes across all (or only subscribed) shows, newest first.
 
     status filters on episodes.status (e.g. 'summarized'); None/'all' = no filter.
+    topic filters on the show's topic tags; None/'all' = no filter.
     """
-    sf = _status_filter(status)
+    sf = _none_if_all(status)
+    tf = _none_if_all(topic)
     rows = conn.execute(
-        _RECENT_SELECT, (int(subscribed_only), sf, sf, int(limit), int(offset)),
+        _RECENT_SELECT,
+        (int(subscribed_only), sf, sf, tf, tf, int(limit), int(offset)),
     ).fetchall()
     return [_feed_item_from_row(r) for r in rows]
 
 
 def count_recent_episodes(
-    conn: sqlite3.Connection, *, subscribed_only: bool = True, status: str | None = None,
+    conn: sqlite3.Connection, *, subscribed_only: bool = True,
+    status: str | None = None, topic: str | None = None,
 ) -> int:
     """Total rows the feed would show — for page count. Mirrors the WHERE above."""
-    sf = _status_filter(status)
+    sf = _none_if_all(status)
+    tf = _none_if_all(topic)
     row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM episodes e JOIN podcasts p ON p.id = e.podcast_id "
-        "WHERE (? = 0 OR p.subscribed = 1) AND (? IS NULL OR e.status = ?)",
-        (int(subscribed_only), sf, sf),
+        f"SELECT COUNT(*) AS cnt {_FEED_WHERE}",
+        (int(subscribed_only), sf, sf, tf, tf),
     ).fetchone()
     return row["cnt"]

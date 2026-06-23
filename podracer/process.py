@@ -19,11 +19,49 @@ from podracer.db import (
     get_transcript,
     save_summary,
     save_transcript,
+    set_podcast_tags,
     update_episode_download,
+    update_podcast_synced,
+    upsert_episode,
 )
 from podracer.download import download_episode
+from podracer.feed import fetch_feed
+from podracer.models import FeedEpisode, FeedMetadata
 from podracer.summarize import Backend, summarize
 from podracer.transcribe import transcribe
+
+
+def apply_feed(
+    conn: sqlite3.Connection,
+    podcast_id: int,
+    meta: FeedMetadata,
+    episodes: list[FeedEpisode],
+) -> int:
+    """Persist a parsed feed: upsert episodes, bump last_synced_at, refresh tags.
+
+    The episode upserts and the last_synced_at watermark commit together (one
+    transaction, rolled back on error). Topic tags are then refreshed
+    best-effort — set_podcast_tags is idempotent, skips unchanged sets, and
+    never wipes tags on a category-less feed. Shared by every sync path (CLI,
+    web, worker) so they stay consistent. Returns the episode count.
+    """
+    try:
+        for ep in episodes:
+            upsert_episode(conn, podcast_id, ep)
+        update_podcast_synced(conn, podcast_id)
+    except Exception:
+        conn.rollback()
+        raise
+    set_podcast_tags(conn, podcast_id, meta.categories)
+    return len(episodes)
+
+
+def sync_podcast(
+    conn: sqlite3.Connection, podcast_id: int, feed_url: str, limit: int | None = None,
+) -> int:
+    """Fetch a feed once and apply it (episodes + last_synced + tags)."""
+    meta, episodes = fetch_feed(feed_url, limit=limit)
+    return apply_feed(conn, podcast_id, meta, episodes)
 
 
 def _resolve_audio_path(conn: sqlite3.Connection, cfg: Config, episode) -> str:

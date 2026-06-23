@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
 
-from podracer.db import count_recent_episodes, get_recent_episodes
+from podracer.db import count_recent_episodes, get_all_tags, get_recent_episodes
 from podracer.web.deps import get_db
 
 router = APIRouter()
@@ -66,15 +66,15 @@ def relative_time(ts: str | None) -> str:
 
 @router.get("/")
 def feed(
-    request: Request, page: int = 1, status: str = "summarized",
+    request: Request, page: int = 1, status: str = "summarized", topic: str = "all",
     db: sqlite3.Connection = Depends(get_db),
 ):
-    total = count_recent_episodes(db, subscribed_only=True, status=status)
+    total = count_recent_episodes(db, subscribed_only=True, status=status, topic=topic)
     pages = max(1, math.ceil(total / PAGE_SIZE))
     page = max(1, min(page, pages))  # clamp so OFFSET can't overshoot the data
     items = get_recent_episodes(
         db, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE,
-        subscribed_only=True, status=status,
+        subscribed_only=True, status=status, topic=topic,
     )
     return request.app.state.templates.TemplateResponse(request, "feed/list.html", {
         "request": request,
@@ -84,6 +84,8 @@ def feed(
         "total": total,
         "status": status,
         "statuses": STATUSES,
+        "topic": topic,
+        "topics": get_all_tags(db, subscribed_only=True),
         "relative_time": relative_time,
         "format_duration": _format_duration,
     })

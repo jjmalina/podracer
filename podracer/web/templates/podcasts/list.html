@@ -39,6 +39,11 @@
                 title="{% if p.podcast.subscribed %}Subscribed{% else %}Not subscribed{% endif %}"></span>
           {{ p.podcast.author or "—" }}{% if p.episode_count %} · {{ p.episode_count }} eps{% endif %}
         </span>
+        {% if p.podcast.topics %}
+        <span class="topic-badges">
+          {% for t in p.podcast.topics %}<span class="badge badge-topic">{{ t }}</span>{% endfor %}
+        </span>
+        {% endif %}
       </div>
     </a>
     {% endfor %}
@@ -50,6 +55,7 @@
         <th class="cover-col"></th>
         <th>Title</th>
         <th>Author</th>
+        <th>Topics</th>
         <th>Episodes</th>
         <th>Subscribed</th>
       </tr>
@@ -60,6 +66,7 @@
         <td class="cover-col"><a href="/podcasts/{{ p.podcast.id }}"><img class="cover cover-row" src="/podcasts/{{ p.podcast.id }}/artwork" alt="" width="40" height="40"></a></td>
         <td><a href="/podcasts/{{ p.podcast.id }}">{{ p.podcast.title }}</a></td>
         <td>{{ p.podcast.author or "" }}</td>
+        <td>{% for t in p.podcast.topics %}<span class="badge badge-topic">{{ t }}</span> {% endfor %}</td>
         <td>{{ p.episode_count }}</td>
         <td>{% if p.podcast.subscribed %}<span class="badge badge-sub">Yes</span>{% endif %}</td>
       </tr>

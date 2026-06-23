@@ -425,6 +425,17 @@ td small { color: var(--pr-muted); }
 .badge-transcribed { --badge-dot: var(--pr-accent); }
 .badge-summarized { --badge-dot: var(--pr-ok); }
 .badge-sub { --badge-dot: var(--pr-accent); color: var(--pr-accent); border-color: var(--pr-accent); }
+.badge-topic { text-transform: none; letter-spacing: 0.02em; }
+.badge-topic::before { display: none; }
+a.badge-topic { text-decoration: none; }
+a.badge-topic:hover { border-color: var(--pr-accent); color: var(--pr-accent); }
+
+.topic-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
 
 .item-kind {
   font-family: var(--pr-mono);
@@ -737,7 +748,92 @@ td.cover-col { width: 40px; padding-right: 0.5rem; }
 
 /* ---------- home feed ---------- */
 
+/* Status chips on the left, topic dropdown pushed to the right. */
+.feed-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0 1.25rem;
+}
+.feed-controls .feed-status { margin: 0; }
+
 .feed-status { margin: 1rem 0 1.25rem; }
+
+/* ---------- topic filter (searchable dropdown) ---------- */
+.topic-filter { position: relative; }
+
+/* Matches the status filter chips (main nav a) in scale and weight. */
+.topic-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  font-family: var(--pr-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--pr-muted);
+  background: transparent;
+  border: 1px solid var(--pr-line);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.topic-filter-btn:hover { color: var(--pr-text); border-color: var(--pr-line-strong); }
+.topic-filter-btn[aria-expanded="true"] { color: var(--pr-accent); border-color: var(--pr-accent); }
+.topic-filter-label { font-weight: 500; }
+.topic-filter-caret { font-size: 0.6rem; opacity: 0.65; }
+
+.topic-filter-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  right: 0;
+  width: min(14rem, 80vw);
+  padding: 0.35rem;
+  background: var(--pr-surface);
+  border: 1px solid var(--pr-line-strong);
+  border-radius: 4px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+.topic-filter-search {
+  width: 100%;
+  margin: 0 0 0.35rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.75rem;
+  height: auto;
+}
+.topic-filter-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 13rem;
+  overflow-y: auto;
+}
+.topic-filter-list li { margin: 0; }
+.topic-filter-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.28rem 0.45rem;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  color: var(--pr-text);
+  text-decoration: none;
+}
+.topic-filter-list a:hover { background: var(--pr-line); }
+.topic-filter-list a.selected { color: var(--pr-accent); font-weight: 600; }
+.topic-filter-list a.selected::after { content: "\2713"; margin-left: 0.5rem; }
+.topic-filter-empty {
+  margin: 0;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.75rem;
+  color: var(--pr-muted);
+}
 
 .feed-list {
   list-style: none;
