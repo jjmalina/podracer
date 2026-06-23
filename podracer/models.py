@@ -47,6 +47,28 @@ class FeedItem(BaseModel):
     active_kind: str | None = None  # kind of the in-flight job, if any
 
 
+class EpisodeListItem(BaseModel):
+    """A cross-show / per-show episode row for the JSON API.
+
+    Like FeedItem but carries the existence flags (has_summary / has_transcript)
+    and, when requested, the raw PodcastSummary JSON (summary_data) — all from a
+    single query so the API list endpoint avoids per-row follow-ups. summary_data
+    is left NULL unless the caller asked to include summaries; the route parses
+    it into structured form."""
+    id: int
+    podcast_id: int
+    podcast_title: str
+    title: str
+    published_at: str | None = None
+    created_at: str | None = None
+    status: str = "pending"
+    duration_seconds: int | None = None
+    active_kind: str | None = None  # kind of the in-flight job, if any
+    has_summary: bool = False
+    has_transcript: bool = False
+    summary_data: str | None = None  # raw PodcastSummary JSON when include_summary
+
+
 class Transcript(BaseModel):
     id: int
     episode_id: int

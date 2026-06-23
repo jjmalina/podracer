@@ -186,6 +186,21 @@ class SpeakerIdentification(BaseModel):
     evidence_quote: str
 
 
+# Advertiser/sponsor voices the diarizer picks up but that aren't real speakers;
+# suppressed from any display of the speaker list (web UI + JSON API).
+AD_SPEAKER_KEYWORDS = {
+    "advertisement", "ad ", "ad)", "sponsor", "commercial", "promo",
+    "voiceover", "disclosure",
+}
+
+
+def is_ad_speaker(s: SpeakerIdentification) -> bool:
+    """Whether a speaker entry looks like an ad/sponsor read rather than a guest."""
+    role = s.role.lower()
+    name = s.name.lower()
+    return any(kw in role or kw in name for kw in AD_SPEAKER_KEYWORDS)
+
+
 class SpeakerIdentifications(BaseModel):
     speakers: list[SpeakerIdentification]
 

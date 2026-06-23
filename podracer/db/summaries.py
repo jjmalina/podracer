@@ -35,6 +35,14 @@ def get_summary(conn: sqlite3.Connection, episode_id: int) -> SummaryRecord | No
     return _from_row(row) if row else None
 
 
+def summary_exists(conn: sqlite3.Connection, episode_id: int) -> bool:
+    """Whether a summary row exists — without loading the (large) data blob."""
+    row = conn.execute(
+        "SELECT 1 FROM summaries WHERE episode_id = ? LIMIT 1", (episode_id,),
+    ).fetchone()
+    return row is not None
+
+
 def delete_summary(conn: sqlite3.Connection, episode_id: int) -> bool:
     with conn:
         cur = conn.execute("DELETE FROM summaries WHERE episode_id = ?", (episode_id,))

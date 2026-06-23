@@ -12,11 +12,13 @@ from podracer.db.connection import (
     set_config,
 )
 from podracer.db.episodes import (
+    count_episodes,
     count_recent_episodes,
     get_episode,
     get_episode_count,
     get_episodes,
     get_recent_episodes,
+    list_episodes,
     update_episode_download,
     upsert_episode,
 )
@@ -28,6 +30,7 @@ from podracer.db.jobs import (
     claim_next_job,
     enqueue_episode_pipeline,
     find_new_episodes,
+    get_active_kind,
     get_blocked_jobs,
     get_done_jobs,
     get_failed_jobs,
@@ -46,9 +49,11 @@ from podracer.db.jobs import (
     set_worker_watermark,
 )
 from podracer.db.podcasts import (
+    count_podcasts,
     get_all_podcasts,
     get_all_tags,
     get_podcast,
+    get_podcasts,
     get_subscribed_podcasts,
     set_podcast_artwork_path,
     set_podcast_tags,
@@ -61,10 +66,12 @@ from podracer.db.summaries import (
     delete_summary,
     get_summary,
     save_summary,
+    summary_exists,
 )
 from podracer.db.transcripts import (
     get_transcript,
     save_transcript,
+    transcript_exists,
 )
 
 __all__ = [
@@ -75,13 +82,15 @@ __all__ = [
     "upsert_podcast", "subscribe", "unsubscribe", "get_podcast",
     "get_subscribed_podcasts", "get_all_podcasts", "update_podcast_synced",
     "set_podcast_artwork_path", "set_podcast_tags", "get_all_tags",
+    "get_podcasts", "count_podcasts",
     # episodes
     "upsert_episode", "get_episode", "get_episodes", "get_episode_count",
     "update_episode_download", "get_recent_episodes", "count_recent_episodes",
+    "list_episodes", "count_episodes",
     # transcripts
-    "save_transcript", "get_transcript",
+    "save_transcript", "get_transcript", "transcript_exists",
     # summaries
-    "save_summary", "get_summary", "delete_summary",
+    "save_summary", "get_summary", "delete_summary", "summary_exists",
     # jobs / watermark
     "WATERMARK_KEY", "LAST_SYNC_KEY",
     "init_worker_watermark", "get_worker_watermark", "set_worker_watermark",
@@ -91,5 +100,5 @@ __all__ = [
     "cascade_block_dependents", "reset_running_jobs",
     "get_job_counts", "get_running_jobs", "get_queued_jobs",
     "get_done_jobs", "get_failed_jobs", "get_blocked_jobs",
-    "get_job", "retry_job", "cancel_job",
+    "get_job", "retry_job", "cancel_job", "get_active_kind",
 ]

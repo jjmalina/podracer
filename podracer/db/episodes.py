@@ -1,6 +1,8 @@
 import sqlite3
 
-from podracer.models import Episode, FeedEpisode, FeedItem
+from podracer.db.jobs import ACTIVE_KIND_SUBSELECT
+from podracer.db.podcasts import tag_filter_clause
+from podracer.models import Episode, EpisodeListItem, FeedEpisode, FeedItem
 
 
 def _from_row(row: sqlite3.Row) -> Episode:
@@ -86,9 +88,7 @@ _RECENT_SELECT = f"""
         e.status AS status,
         e.duration_seconds AS duration_seconds,
         p.title AS podcast_title,
-        (SELECT j.kind FROM jobs j
-           WHERE j.episode_id = e.id AND j.status IN ('queued', 'running')
-           ORDER BY j.id LIMIT 1) AS active_kind
+        {ACTIVE_KIND_SUBSELECT} AS active_kind
     {_FEED_WHERE}
     ORDER BY recency DESC, e.id DESC
     LIMIT ? OFFSET ?
@@ -137,5 +137,114 @@ def count_recent_episodes(
     row = conn.execute(
         f"SELECT COUNT(*) AS cnt {_FEED_WHERE}",
         (int(subscribed_only), sf, sf, tf, tf),
+    ).fetchone()
+    return row["cnt"]
+
+
+# --- JSON API episode listing ------------------------------------------------
+# The API list differs from the home feed in three ways: it can filter to one
+# show (podcast_id), it accepts *multiple* tags (OR-semantics, via the shared
+# tag_filter_clause), and it surfaces has_summary / has_transcript flags plus
+# the optional embedded summary. The WHERE clause is built dynamically because
+# the tag IN (...) placeholder count varies, so it's a builder rather than the
+# static _FEED_WHERE string above.
+
+
+def _api_where(
+    *, subscribed_only: bool, status: str | None,
+    tags: list[str] | None, podcast_id: int | None,
+) -> tuple[str, list]:
+    """Build the shared WHERE clause + params for the API list and count.
+
+    Status is an exact match (None/'all' = no filter); tags use the shared
+    OR-semantics EXISTS predicate. Params are bound, never interpolated.
+    """
+    clauses: list[str] = []
+    params: list = []
+    if subscribed_only:
+        clauses.append("p.subscribed = 1")
+    if podcast_id is not None:
+        clauses.append("e.podcast_id = ?")
+        params.append(int(podcast_id))
+    sf = _none_if_all(status)
+    if sf is not None:
+        clauses.append("e.status = ?")
+        params.append(sf)
+    tag_clause, tag_params = tag_filter_clause(tags)
+    if tag_clause:
+        clauses.append(tag_clause)
+        params.extend(tag_params)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, params
+
+
+def _episode_list_item_from_row(row: sqlite3.Row) -> EpisodeListItem:
+    return EpisodeListItem(**{k: row[k] for k in row.keys()})
+
+
+def list_episodes(
+    conn: sqlite3.Connection,
+    *,
+    limit: int,
+    offset: int = 0,
+    podcast_id: int | None = None,
+    tags: list[str] | None = None,
+    status: str | None = None,
+    subscribed_only: bool = True,
+    include_summary: bool = False,
+) -> list[EpisodeListItem]:
+    """Episodes for the JSON API, newest first, with existence flags.
+
+    podcast_id scopes to one show; tags is an OR-set of topic names; status is an
+    exact episodes.status match (None/'all' = no filter). has_summary /
+    has_transcript come from LEFT JOINs in the same query (no N+1). When
+    include_summary is set, the raw PodcastSummary JSON rides along in
+    summary_data for the route to parse.
+    """
+    where, params = _api_where(
+        subscribed_only=subscribed_only, status=status, tags=tags, podcast_id=podcast_id,
+    )
+    summary_col = "s.data AS summary_data" if include_summary else "NULL AS summary_data"
+    sql = f"""
+        SELECT
+            e.id AS id,
+            e.podcast_id AS podcast_id,
+            e.title AS title,
+            e.published_at AS published_at,
+            e.created_at AS created_at,
+            e.status AS status,
+            e.duration_seconds AS duration_seconds,
+            p.title AS podcast_title,
+            {ACTIVE_KIND_SUBSELECT} AS active_kind,
+            (s.episode_id IS NOT NULL) AS has_summary,
+            (t.episode_id IS NOT NULL) AS has_transcript,
+            {summary_col}
+        FROM episodes e
+        JOIN podcasts p ON p.id = e.podcast_id
+        LEFT JOIN summaries s ON s.episode_id = e.id
+        LEFT JOIN transcripts t ON t.episode_id = e.id
+        {where}
+        ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
+        LIMIT ? OFFSET ?
+    """
+    rows = conn.execute(sql, [*params, int(limit), int(offset)]).fetchall()
+    return [_episode_list_item_from_row(r) for r in rows]
+
+
+def count_episodes(
+    conn: sqlite3.Connection,
+    *,
+    podcast_id: int | None = None,
+    tags: list[str] | None = None,
+    status: str | None = None,
+    subscribed_only: bool = True,
+) -> int:
+    """Total rows list_episodes would return — for pagination. Same WHERE."""
+    where, params = _api_where(
+        subscribed_only=subscribed_only, status=status, tags=tags, podcast_id=podcast_id,
+    )
+    row = conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM episodes e JOIN podcasts p ON p.id = e.podcast_id{where}",
+        params,
     ).fetchone()
     return row["cnt"]

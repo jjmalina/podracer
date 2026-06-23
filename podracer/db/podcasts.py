@@ -83,6 +83,82 @@ def get_all_podcasts(conn: sqlite3.Connection) -> list[Podcast]:
     return _attach_topics(conn, [_from_row(r) for r in rows])
 
 
+def clean_tags(tags: list[str] | None) -> list[str] | None:
+    """Drop blanks and the 'all' sentinel; None when nothing real remains.
+
+    Shared by the podcast and episode tag filters so 'what counts as a real
+    tag' has one definition."""
+    if not tags:
+        return None
+    cleaned = [t.strip() for t in tags if t and t.strip() and t.strip().lower() != "all"]
+    return cleaned or None
+
+
+def tag_filter_clause(tags: list[str] | None) -> tuple[str, list]:
+    """An EXISTS(...) predicate matching podcasts (aliased `p`) that carry any of
+    `tags` — OR-semantics, case-insensitive (tags.name is COLLATE NOCASE). Names
+    are bound, never interpolated. Returns ('', []) when there's no real tag, so
+    callers can skip the clause.
+    """
+    cleaned = clean_tags(tags)
+    if not cleaned:
+        return "", []
+    placeholders = ",".join("?" * len(cleaned))
+    clause = (
+        "EXISTS (SELECT 1 FROM podcast_tags pt JOIN tags t ON t.id = pt.tag_id "
+        f"WHERE pt.podcast_id = p.id AND t.name IN ({placeholders}))"
+    )
+    return clause, cleaned
+
+
+def _podcasts_where(
+    *, subscribed_only: bool, tags: list[str] | None,
+) -> tuple[str, list]:
+    """Shared WHERE for the API podcast list + count. Tags are OR-semantics."""
+    clauses: list[str] = []
+    params: list = []
+    if subscribed_only:
+        clauses.append("p.subscribed = 1")
+    tag_clause, tag_params = tag_filter_clause(tags)
+    if tag_clause:
+        clauses.append(tag_clause)
+        params.extend(tag_params)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, params
+
+
+def get_podcasts(
+    conn: sqlite3.Connection,
+    *,
+    tags: list[str] | None = None,
+    subscribed_only: bool = True,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[Podcast]:
+    """Podcasts for the JSON API: optional tag (OR-set) filter + pagination.
+
+    Distinct from get_all_podcasts / get_subscribed_podcasts, which take no
+    filters and don't paginate. Topics are attached in one batched query.
+    """
+    where, params = _podcasts_where(subscribed_only=subscribed_only, tags=tags)
+    # p.id tiebreaker so pages stay stable when two shows share a title.
+    sql = f"SELECT p.* FROM podcasts p{where} ORDER BY p.title, p.id"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params = [*params, int(limit), int(offset)]
+    rows = conn.execute(sql, params).fetchall()
+    return _attach_topics(conn, [_from_row(r) for r in rows])
+
+
+def count_podcasts(
+    conn: sqlite3.Connection, *, tags: list[str] | None = None, subscribed_only: bool = True,
+) -> int:
+    """Total rows get_podcasts would return — for pagination. Same WHERE."""
+    where, params = _podcasts_where(subscribed_only=subscribed_only, tags=tags)
+    row = conn.execute(f"SELECT COUNT(*) AS cnt FROM podcasts p{where}", params).fetchone()
+    return row["cnt"]
+
+
 def update_podcast_synced(conn: sqlite3.Connection, podcast_id: int) -> None:
     conn.execute(
         "UPDATE podcasts SET last_synced_at = datetime('now') WHERE id = ?",

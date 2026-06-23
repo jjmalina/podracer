@@ -35,3 +35,11 @@ def get_transcript(conn: sqlite3.Connection, episode_id: int) -> Transcript | No
         "SELECT * FROM transcripts WHERE episode_id = ?", (episode_id,),
     ).fetchone()
     return _from_row(row) if row else None
+
+
+def transcript_exists(conn: sqlite3.Connection, episode_id: int) -> bool:
+    """Whether a transcript row exists — without loading the (~200 KB) text."""
+    row = conn.execute(
+        "SELECT 1 FROM transcripts WHERE episode_id = ? LIMIT 1", (episode_id,),
+    ).fetchone()
+    return row is not None
