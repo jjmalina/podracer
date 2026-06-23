@@ -3,6 +3,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
@@ -11,6 +14,8 @@ from podracer.config import Config, load_config
 from podracer.db import get_connection, init_db
 from podracer.logging_config import configure_logging
 from podracer.sentry_config import configure_sentry
+from podracer.web.routes.api import API_PREFIX, SCHEMA_VERSION
+from podracer.web.routes.api import router as api_router
 from podracer.web.routes.episodes import router as episodes_router
 from podracer.web.routes.feed import router as feed_router
 from podracer.web.routes.jobs import router as jobs_router
@@ -71,7 +76,13 @@ def create_app(cfg: Config) -> FastAPI:
         app.state.cfg = cfg
         yield
 
-    app = FastAPI(title="podracer", lifespan=lifespan)
+    # The interactive docs cover only the JSON API and are served under the
+    # /api/v1 prefix (below); disable the default root /docs, /redoc and
+    # /openapi.json so the HTML UI routes never leak into a published schema.
+    app = FastAPI(
+        title="podracer", lifespan=lifespan,
+        docs_url=None, redoc_url=None, openapi_url=None,
+    )
     app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     app.state.templates.env.filters["linkify"] = linkify
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -81,6 +92,24 @@ def create_app(cfg: Config) -> FastAPI:
     app.include_router(episodes_router)
     app.include_router(search_router)
     app.include_router(jobs_router)
+    app.include_router(api_router)
+
+    # OpenAPI schema + Swagger UI for the JSON API, scoped to the /api/v1 routes
+    # only — the HTML UI routes are filtered out so the contract stays API-only.
+    @app.get(f"{API_PREFIX}/openapi.json", include_in_schema=False)
+    def api_openapi() -> JSONResponse:
+        return JSONResponse(get_openapi(
+            title="podracer REST API",
+            version=SCHEMA_VERSION,
+            description="Read-only JSON API for podcasts, episodes, summaries, and transcripts.",
+            routes=[r for r in app.routes if getattr(r, "path", "").startswith(API_PREFIX)],
+        ))
+
+    @app.get(f"{API_PREFIX}/docs", include_in_schema=False)
+    def api_docs() -> HTMLResponse:
+        return get_swagger_ui_html(
+            openapi_url=f"{API_PREFIX}/openapi.json", title="podracer REST API — docs",
+        )
 
     return app
 

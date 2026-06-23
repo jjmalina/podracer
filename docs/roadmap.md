@@ -381,6 +381,12 @@ CLI.
 
 ## REST API (JSON) for agent + script access
 
+**Status (2026-06-22).** The read-only GET slice is promoted to a plan —
+`docs/plans/2026-06-22-rest-api.md` (list/detail endpoints for podcasts, the
+cross-show feed, episodes, summaries, transcript; tag + status filters; inline
+`?include=summary`; no auth). Write endpoints, bearer-token auth, and the MCP
+wrapper below remain unplanned here.
+
 **Problem.** Today the only programmatic access to podracer is shelling
 into the CLI. Agents (Claude, custom scripts, n8n / Zapier flows, a
 voice assistant) can't pull a transcript or kick off processing

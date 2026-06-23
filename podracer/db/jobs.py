@@ -6,9 +6,29 @@ from podracer.models import Job
 WATERMARK_KEY = "worker_watermark"
 LAST_SYNC_KEY = "worker_last_sync"
 
+# Statuses that count as an episode having an in-flight job. The correlated
+# subselect below is the single place the listing queries (db/episodes.py) get
+# the "active job kind"; get_active_kind is its standalone form for callers that
+# already have an episode id.
+ACTIVE_KIND_SUBSELECT = (
+    "(SELECT j.kind FROM jobs j "
+    "WHERE j.episode_id = e.id AND j.status IN ('queued', 'running') "
+    "ORDER BY j.id LIMIT 1)"
+)
+
 
 def _from_row(row: sqlite3.Row) -> Job:
     return Job(**{k: row[k] for k in row.keys()})
+
+
+def get_active_kind(conn: sqlite3.Connection, episode_id: int) -> str | None:
+    """Kind of the episode's in-flight (queued/running) job, or None."""
+    row = conn.execute(
+        "SELECT kind FROM jobs WHERE episode_id = ? "
+        "AND status IN ('queued', 'running') ORDER BY id LIMIT 1",
+        (episode_id,),
+    ).fetchone()
+    return row["kind"] if row else None
 
 
 # ---------- Watermark + sync timestamp ----------

@@ -12,7 +12,7 @@ from podracer.db import (
     get_summary,
     get_transcript,
 )
-from podracer.summarize import Chapter, Highlight, PodcastSummary, SpeakerIdentification
+from podracer.summarize import Chapter, Highlight, PodcastSummary, is_ad_speaker
 from podracer.web.deps import get_db
 
 
@@ -26,17 +26,9 @@ class ChapterEntry(ChapterBucket):
 
 router = APIRouter()
 
-AD_KEYWORDS = {"advertisement", "ad ", "ad)", "sponsor", "commercial", "promo", "voiceover", "disclosure"}
-
 # Sorts after any well-formed HH:MM:SS string, so an item past the last
 # chapter still falls inside the final window.
 _END_SENTINEL = "99:99:99"
-
-
-def _is_ad_speaker(s: SpeakerIdentification) -> bool:
-    role = s.role.lower()
-    name = s.name.lower()
-    return any(kw in role or kw in name for kw in AD_KEYWORDS)
 
 
 def _format_duration(seconds: int | None) -> str:
@@ -109,7 +101,7 @@ def episode_detail(request: Request, episode_id: int, db: sqlite3.Connection = D
     if record:
         try:
             summary = PodcastSummary.model_validate_json(record.data)
-            summary.speakers = [s for s in summary.speakers if not _is_ad_speaker(s)]
+            summary.speakers = [s for s in summary.speakers if not is_ad_speaker(s)]
             highlights = sorted(summary.effective_highlights(), key=lambda h: h.timestamp)
             chapters_nested, pre_chapter, orphan = _nest_under_chapters(summary)
         except Exception:
