@@ -23,20 +23,21 @@ from podracer.db import (
     get_worker_watermark,
     init_db,
     save_transcript,
+    set_podcast_tags,
     subscribe,
     unsubscribe,
     update_episode_download,
-    update_podcast_synced,
-    upsert_episode,
     upsert_podcast,
 )
 from podracer.download import download_episode, ensure_artwork_cached
-from podracer.feed import fetch_episodes, fetch_feed_metadata
+from podracer.feed import fetch_feed, fetch_feed_metadata
 from podracer.logging_config import configure_logging
 from podracer.process import (
+    apply_feed,
     process_episode,
     queue_latest_unprocessed_episode,
     summarize_episode,
+    sync_podcast,
 )
 from podracer.search import search_podcasts
 from podracer.sentry_config import configure_sentry
@@ -75,15 +76,6 @@ def _format_duration(seconds: int | None) -> str:
     return f"{m}m"
 
 
-def _sync_episodes(conn, podcast_id: int, feed_url: str, limit: int | None = None) -> int:
-    episodes = fetch_episodes(feed_url, limit=limit)
-    for ep in episodes:
-        upsert_episode(conn, podcast_id, ep)
-    conn.commit()
-    update_podcast_synced(conn, podcast_id)
-    return len(episodes)
-
-
 def cmd_search(args):
     results = search_podcasts(args.query)
     if not results:
@@ -106,12 +98,14 @@ def cmd_subscribe(args):
     feed_url = args.feed_url
 
     logger.info("Fetching feed: %s", feed_url)
-    meta = fetch_feed_metadata(feed_url)
+    # Single parse: metadata for the podcast row, plus episodes + categories.
+    meta, episodes = fetch_feed(feed_url, limit=args.limit)
     podcast_id = upsert_podcast(conn, meta.title, meta.author, feed_url,
                                 meta.artwork_url, meta.description)
     subscribe(conn, podcast_id)
 
-    count = _sync_episodes(conn, podcast_id, feed_url, limit=args.limit)
+    # apply_feed upserts episodes and (re)applies topic tags from the categories.
+    count = apply_feed(conn, podcast_id, meta, episodes)
 
     queued_episode_id = None
     if not args.no_queue:
@@ -160,11 +154,10 @@ def cmd_episodes(args):
     conn = _db()
 
     if args.feed:
-        meta = fetch_feed_metadata(args.feed)
+        meta, episodes = fetch_feed(args.feed, limit=args.limit)
         podcast_id = upsert_podcast(conn, meta.title, meta.author, args.feed,
                                     meta.artwork_url, meta.description)
-        conn.commit()
-        _sync_episodes(conn, podcast_id, args.feed, limit=args.limit)
+        apply_feed(conn, podcast_id, meta, episodes)
         podcast = get_podcast(conn, podcast_id)
         if not podcast:
             logger.error("Failed to create podcast.")
@@ -176,7 +169,7 @@ def cmd_episodes(args):
             sys.exit(1)
         if args.sync:
             logger.info("Syncing: %s", podcast.title)
-            _sync_episodes(conn, args.podcast_id, podcast.feed_url)
+            sync_podcast(conn, args.podcast_id, podcast.feed_url)
     else:
         logger.error("Provide a podcast_id or --feed <url>.")
         sys.exit(1)
@@ -270,7 +263,7 @@ def cmd_sync(args):
 
     for podcast in podcasts:
         logger.info("Syncing: %s", podcast.title)
-        count = _sync_episodes(conn, podcast.id, podcast.feed_url, limit=args.limit)
+        count = sync_podcast(conn, podcast.id, podcast.feed_url, limit=args.limit)
         logger.info("  %d episodes", count)
 
     print(f"Synced {len(podcasts)} podcast(s).")
@@ -510,6 +503,30 @@ def cmd_backfill_artwork(args):
         print(f"Artwork backfill: {cached} cached, {skipped} skipped (no art), {failed} failed.")
 
 
+def cmd_backfill_topics(args):
+    conn = _db()
+    tagged = skipped = failed = 0
+    for p in get_subscribed_podcasts(conn):
+        try:
+            meta = fetch_feed_metadata(p.feed_url)
+        except Exception:
+            logger.exception("topics_backfill_meta_failed", podcast=p.title)
+            failed += 1
+            continue
+        if not meta.categories:
+            skipped += 1
+            continue
+        set_podcast_tags(conn, p.id, meta.categories)
+        tagged += 1
+        if not args.json:
+            print(f"  {p.title}: {', '.join(meta.categories)}")
+
+    if args.json:
+        print(json.dumps({"tagged": tagged, "skipped": skipped, "failed": failed}))
+    else:
+        print(f"Topics backfill: {tagged} tagged, {skipped} skipped (no categories), {failed} failed.")
+
+
 def main():
     configure_logging()
     configure_sentry()
@@ -600,6 +617,10 @@ def main():
     p_backfill_artwork = subparsers.add_parser(
         "backfill-artwork", help="Cache cover art for subscribed podcasts")
     p_backfill_artwork.set_defaults(func=cmd_backfill_artwork)
+
+    p_backfill_topics = subparsers.add_parser(
+        "backfill-topics", help="Import topic/genre tags from feeds for subscribed podcasts")
+    p_backfill_topics.set_defaults(func=cmd_backfill_topics)
 
     args = parser.parse_args()
     if args.verbose:

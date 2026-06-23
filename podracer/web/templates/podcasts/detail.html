@@ -9,6 +9,11 @@
       <h1>{{ podcast.title }}</h1>
       <p>{{ podcast.author or "" }}{% if podcast.subscribed %} · <span class="badge badge-sub">Subscribed</span>{% endif %}</p>
     </hgroup>
+    {% if podcast.topics %}
+    <p class="topic-badges">
+      {% for t in podcast.topics %}<a class="badge badge-topic" href="/?status=all&amp;topic={{ t | urlencode }}">{{ t }}</a>{% endfor %}
+    </p>
+    {% endif %}
     {% if podcast.description %}
     <p>{{ podcast.description }}</p>
     {% endif %}

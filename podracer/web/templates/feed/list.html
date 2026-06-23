@@ -4,14 +4,92 @@
 <p class="eyebrow">Feed</p>
 <h1>Recent episodes</h1>
 
-<nav class="feed-status" aria-label="Status">
-  <ul>
-    {% for s in statuses %}
-    <li><a href="/?status={{ s }}" {% if status == s %}class="active-filter"{% endif %}>{{ s }}</a></li>
-    {% endfor %}
-    <li><a href="/?status=all" {% if status == "all" %}class="active-filter"{% endif %}>all</a></li>
-  </ul>
-</nav>
+<div class="feed-controls">
+  <nav class="feed-status" aria-label="Status">
+    <ul>
+      {% for s in statuses %}
+      <li><a href="/?status={{ s }}&amp;topic={{ topic | urlencode }}" {% if status == s %}class="active-filter"{% endif %}>{{ s }}</a></li>
+      {% endfor %}
+      <li><a href="/?status=all&amp;topic={{ topic | urlencode }}" {% if status == "all" %}class="active-filter"{% endif %}>all</a></li>
+    </ul>
+  </nav>
+
+  {% if topics %}
+  <div class="topic-filter">
+    <button type="button" class="topic-filter-btn" aria-haspopup="listbox" aria-expanded="false">
+      <span class="topic-filter-label">{% if topic == "all" %}All topics{% else %}{{ topic }}{% endif %}</span>
+      <span class="topic-filter-caret" aria-hidden="true">▾</span>
+    </button>
+  <div class="topic-filter-panel" hidden>
+    <input type="text" class="topic-filter-search" placeholder="Search topics…"
+           aria-label="Search topics" autocomplete="off">
+    <ul class="topic-filter-list" role="listbox">
+      <li><a role="option" href="/?status={{ status }}&amp;topic=all" data-name="all topics"
+             {% if topic == "all" %}class="selected" aria-selected="true"{% endif %}>All topics</a></li>
+      {% for t in topics %}
+      <li><a role="option" href="/?status={{ status }}&amp;topic={{ t | urlencode }}" data-name="{{ t | lower }}"
+             {% if topic == t %}class="selected" aria-selected="true"{% endif %}>{{ t }}</a></li>
+      {% endfor %}
+    </ul>
+    <p class="topic-filter-empty" hidden>No matching topics</p>
+  </div>
+</div>
+<script>
+  (function () {
+    var root = document.querySelector('.topic-filter');
+    if (!root) return;
+    var btn = root.querySelector('.topic-filter-btn');
+    var panel = root.querySelector('.topic-filter-panel');
+    var search = root.querySelector('.topic-filter-search');
+    var empty = root.querySelector('.topic-filter-empty');
+    var items = Array.prototype.slice.call(root.querySelectorAll('.topic-filter-list a'));
+
+    function applyFilter(q) {
+      q = q.trim().toLowerCase();
+      var visible = 0;
+      items.forEach(function (a) {
+        var match = a.getAttribute('data-name').indexOf(q) !== -1;
+        a.parentElement.hidden = !match;
+        if (match) visible++;
+      });
+      empty.hidden = visible !== 0;
+    }
+    function firstVisible() {
+      for (var i = 0; i < items.length; i++) {
+        if (!items[i].parentElement.hidden) return items[i];
+      }
+      return null;
+    }
+    function open() {
+      panel.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      search.value = '';
+      applyFilter('');
+      search.focus();
+    }
+    function close() {
+      panel.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+    }
+
+    btn.addEventListener('click', function () { panel.hidden ? open() : close(); });
+    search.addEventListener('input', function () { applyFilter(search.value); });
+    search.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var f = firstVisible();
+        if (f) window.location.href = f.href;
+      } else if (e.key === 'Escape') {
+        close(); btn.focus();
+      }
+    });
+    document.addEventListener('click', function (e) {
+      if (!root.contains(e.target)) close();
+    });
+  })();
+</script>
+  {% endif %}
+</div>
 
 {% if items %}
 <ul class="feed-list">
@@ -45,13 +123,13 @@
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pagination">
   {% if page > 1 %}
-  <a class="pager-link" href="/?status={{ status }}&amp;page={{ page - 1 }}">‹ Newer</a>
+  <a class="pager-link" href="/?status={{ status }}&amp;topic={{ topic | urlencode }}&amp;page={{ page - 1 }}">‹ Newer</a>
   {% else %}
   <span class="pager-link pager-disabled">‹ Newer</span>
   {% endif %}
   <span class="pager-status">Page {{ page }} of {{ pages }}</span>
   {% if page < pages %}
-  <a class="pager-link" href="/?status={{ status }}&amp;page={{ page + 1 }}">Older ›</a>
+  <a class="pager-link" href="/?status={{ status }}&amp;topic={{ topic | urlencode }}&amp;page={{ page + 1 }}">Older ›</a>
   {% else %}
   <span class="pager-link pager-disabled">Older ›</span>
   {% endif %}

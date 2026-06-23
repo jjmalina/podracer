@@ -22,13 +22,10 @@ from podracer.db import (
     reset_running_jobs,
     set_worker_last_sync,
     set_worker_watermark,
-    update_podcast_synced,
-    upsert_episode,
 )
 from podracer.download import ensure_artwork_cached
-from podracer.feed import fetch_episodes
 from podracer.models import Job
-from podracer.process import summarize_episode, transcribe_episode
+from podracer.process import summarize_episode, sync_podcast, transcribe_episode
 
 
 def _utcnow_iso() -> str:
@@ -93,16 +90,13 @@ class Worker:
             if self.shutdown.is_set():
                 return
             try:
-                episodes = fetch_episodes(podcast.feed_url, limit=10)
-                for ep in episodes:
-                    upsert_episode(self.conn, podcast.id, ep)
-                # One transaction per podcast: update_podcast_synced commits
-                # the upserts and the last_synced_at bump together.
-                update_podcast_synced(self.conn, podcast.id)
+                # Upserts episodes, bumps last_synced_at, and refreshes topic
+                # tags from the feed's iTunes categories — one shared path.
+                count = sync_podcast(self.conn, podcast.id, podcast.feed_url, limit=10)
                 # Backstop the subscribe-time copy: heal any podcast whose cover
                 # wasn't cached yet (host was down, subscribed before this landed).
                 ensure_artwork_cached(self.conn, podcast, self.cfg.media_dir)
-                logger.info("feed_synced", podcast=podcast.title, episodes=len(episodes))
+                logger.info("feed_synced", podcast=podcast.title, episodes=count)
             except Exception:
                 # Drop any partial batch — without this, pending upserts would
                 # ride along in whatever commit happens next on this connection.

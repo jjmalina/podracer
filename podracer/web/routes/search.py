@@ -6,13 +6,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from podracer.db import (
     get_podcast,
     subscribe,
-    update_podcast_synced,
-    upsert_episode,
     upsert_podcast,
 )
 from podracer.download import ensure_artwork_cached
-from podracer.feed import fetch_episodes, fetch_feed_metadata
-from podracer.process import queue_latest_unprocessed_episode
+from podracer.feed import fetch_feed
+from podracer.process import apply_feed, queue_latest_unprocessed_episode
 from podracer.search import search_podcasts
 from podracer.web.deps import get_db, validate_external_url
 
@@ -49,8 +47,7 @@ def search_results(request: Request, q: str = ""):
 @router.get("/browse")
 def browse_feed(request: Request, feed_url: str):
     validate_external_url(feed_url)
-    meta = fetch_feed_metadata(feed_url)
-    episodes = fetch_episodes(feed_url)
+    meta, episodes = fetch_feed(feed_url)
     return request.app.state.templates.TemplateResponse(request, "search/browse.html", {
         "request": request,
         "meta": meta,
@@ -64,17 +61,15 @@ def browse_feed(request: Request, feed_url: str):
 def subscribe_from_search(request: Request, feed_url: str, db: sqlite3.Connection = Depends(get_db)):
     validate_external_url(feed_url)
     cfg = request.app.state.cfg
-    meta = fetch_feed_metadata(feed_url)
+    # Single parse: metadata for the podcast row, plus episodes + categories.
+    meta, episodes = fetch_feed(feed_url, limit=10)
     podcast_id = upsert_podcast(db, meta.title, meta.author, feed_url,
                                 meta.artwork_url, meta.description)
     subscribe(db, podcast_id)
 
-    # Sync recent episodes so the user has something to browse + we can queue
-    # the latest one for processing.
-    for ep in fetch_episodes(feed_url, limit=10):
-        upsert_episode(db, podcast_id, ep)
-    db.commit()
-    update_podcast_synced(db, podcast_id)
+    # Sync recent episodes (so the user has something to browse and we can queue
+    # the latest) and apply topic tags from the feed's categories.
+    apply_feed(db, podcast_id, meta, episodes)
 
     # Copy the cover now (primary trigger) so the podcast page shows it
     # immediately; the worker sync is the backstop if this fetch fails.

@@ -13,6 +13,7 @@ class Podcast(BaseModel):
     subscribed_at: str | None = None
     last_synced_at: str | None = None
     created_at: str | None = None
+    topics: list[str] = []  # genre/topic tags; populated separately, not a column
 
 
 class Episode(BaseModel):
@@ -70,6 +71,7 @@ class FeedMetadata(BaseModel):
     description: str | None = None
     artwork_url: str | None = None
     feed_url: str
+    categories: list[str] = []  # iTunes categories, e.g. ['Business', 'Investing']
 
 
 class FeedEpisode(BaseModel):

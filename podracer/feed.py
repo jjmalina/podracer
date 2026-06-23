@@ -72,20 +72,81 @@ def _get_show_notes(entry: dict) -> str | None:
     return None
 
 
-def fetch_feed_metadata(feed_url: str) -> FeedMetadata:
-    feed = feedparser.parse(feed_url)
-    f = feed.feed
+# Apple Podcasts' official category list (top-level + subcategories), as of
+# 2026. feedparser flattens <itunes:category> AND <itunes:keywords> into f.tags
+# with the same itunes scheme and no distinguishing marker, so we can't tell a
+# real category from a keyword structurally. Matching against this canonical set
+# drops the vast majority of keyword spam (arbitrary words like "hacker",
+# "code"). Known limitation: a <itunes:keywords> term that happens to equal a
+# real category name (e.g. "comedy", "news", "politics") still slips through and
+# can over-tag a show. Matched case-insensitively; the canonical casing here is
+# what we store. Re-sync from Apple's published list if categories change.
+_APPLE_CATEGORIES = frozenset({
+    "Arts", "Books", "Design", "Fashion & Beauty", "Food", "Performing Arts",
+    "Visual Arts",
+    "Business", "Careers", "Entrepreneurship", "Investing", "Management",
+    "Marketing", "Non-Profit",
+    "Comedy", "Comedy Interviews", "Improv", "Stand-Up",
+    "Education", "Courses", "How To", "Language Learning", "Self-Improvement",
+    "Fiction", "Comedy Fiction", "Drama", "Science Fiction",
+    "Government",
+    "History",
+    "Health & Fitness", "Alternative Health", "Fitness", "Medicine",
+    "Mental Health", "Nutrition", "Sexuality",
+    "Kids & Family", "Education for Kids", "Parenting", "Pets & Animals",
+    "Stories for Kids",
+    "Leisure", "Animation & Manga", "Automotive", "Aviation", "Crafts", "Games",
+    "Hobbies", "Home & Garden", "Video Games",
+    "Music", "Music Commentary", "Music History", "Music Interviews",
+    "News", "Business News", "Daily News", "Entertainment News",
+    "News Commentary", "Politics", "Sports News", "Tech News",
+    "Religion & Spirituality", "Buddhism", "Christianity", "Hinduism", "Islam",
+    "Judaism", "Religion", "Spirituality",
+    "Science", "Astronomy", "Chemistry", "Earth Sciences", "Life Sciences",
+    "Mathematics", "Natural Sciences", "Nature", "Physics", "Social Sciences",
+    "Society & Culture", "Documentary", "Personal Journals", "Philosophy",
+    "Places & Travel", "Relationships",
+    "Sports", "Baseball", "Basketball", "Cricket", "Fantasy Sports", "Football",
+    "Golf", "Hockey", "Rugby", "Running", "Soccer", "Swimming", "Tennis",
+    "Volleyball", "Wilderness", "Wrestling",
+    "Technology",
+    "True Crime",
+    "TV & Film", "After Shows", "Film History", "Film Interviews",
+    "Film Reviews", "TV Reviews",
+})
+_CANONICAL_CATEGORY = {c.lower(): c for c in _APPLE_CATEGORIES}
+
+
+def _get_categories(f: dict) -> list[str]:
+    """Genre tags from the feed's <itunes:category> tags.
+
+    feedparser flattens categories (and any <itunes:keywords>) into f.tags as
+    {term, scheme, label} dicts. We keep only terms that are real Apple Podcasts
+    categories, normalise to canonical casing, dedup, and preserve feed order.
+    """
+    categories: list[str] = []
+    seen: set[str] = set()
+    for tag in f.get("tags", []) or []:
+        term = (tag.get("term") or "").strip()
+        canonical = _CANONICAL_CATEGORY.get(term.lower())
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            categories.append(canonical)
+    return categories
+
+
+def _parse_metadata(f: dict, feed_url: str) -> FeedMetadata:
     return FeedMetadata(
         title=f.get("title", "Unknown"),
         author=f.get("author") or f.get("itunes_author"),
         description=_strip_html(f.get("summary") or f.get("subtitle")),
         artwork_url=f.get("image", {}).get("href") if isinstance(f.get("image"), dict) else None,
         feed_url=feed_url,
+        categories=_get_categories(f),
     )
 
 
-def fetch_episodes(feed_url: str, limit: int | None = None) -> list[FeedEpisode]:
-    feed = feedparser.parse(feed_url)
+def _parse_episodes(feed, limit: int | None = None) -> list[FeedEpisode]:
     entries = feed.entries[:limit] if limit else feed.entries
     episodes = []
     for entry in entries:
@@ -103,3 +164,22 @@ def fetch_episodes(feed_url: str, limit: int | None = None) -> list[FeedEpisode]
             show_notes=_get_show_notes(entry),
         ))
     return episodes
+
+
+def fetch_feed_metadata(feed_url: str) -> FeedMetadata:
+    feed = feedparser.parse(feed_url)
+    return _parse_metadata(feed.feed, feed_url)
+
+
+def fetch_episodes(feed_url: str, limit: int | None = None) -> list[FeedEpisode]:
+    feed = feedparser.parse(feed_url)
+    return _parse_episodes(feed, limit)
+
+
+def fetch_feed(
+    feed_url: str, limit: int | None = None,
+) -> tuple[FeedMetadata, list[FeedEpisode]]:
+    """Metadata + episodes from a single parse — for sync paths that need both
+    (episodes to upsert, categories to (re)tag) without downloading twice."""
+    feed = feedparser.parse(feed_url)
+    return _parse_metadata(feed.feed, feed_url), _parse_episodes(feed, limit)

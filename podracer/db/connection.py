@@ -74,6 +74,22 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT
 );
 
+-- Topic/genre tags (e.g. 'Business', 'Technology'), auto-imported from each
+-- feed's iTunes categories. Many-to-many: a show can carry several categories.
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS podcast_tags (
+    podcast_id INTEGER NOT NULL REFERENCES podcasts(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (podcast_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_podcast_tags_tag ON podcast_tags(tag_id);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_depends_on ON jobs(depends_on_job_id);
 
