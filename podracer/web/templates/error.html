@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ title or "Something went wrong" }} — podracer{% endblock %}
+{% block content %}
+<div class="podcast-head-text">
+  <p class="eyebrow">Error</p>
+  <hgroup>
+    <h1>{{ title or "Something went wrong" }}</h1>
+    <p>{{ message }}</p>
+  </hgroup>
+  <p><a href="javascript:history.back()">Go back</a></p>
+</div>
+{% endblock %}

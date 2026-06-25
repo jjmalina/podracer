@@ -7,13 +7,9 @@ from urllib.parse import urlparse
 import httpx
 import sentry_sdk
 
-from podracer import logger
+from podracer import USER_AGENT, logger
 from podracer.db import set_podcast_artwork_path
 from podracer.models import Podcast
-
-# Some podcast hosts (e.g. Buzzsprout) return 403 for requests with httpx's
-# default User-Agent. They accept a distinct app identifier, so send one.
-USER_AGENT = "podracer/0.1.0"
 
 # Image types whose extension we preserve; anything else is stored as .jpg.
 ARTWORK_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -41,7 +37,10 @@ def download_episode(audio_url: str, media_dir: str, podcast_title: str,
         return relative_path, full_path.stat().st_size
 
     with httpx.stream(
-        "GET", audio_url, follow_redirects=True, timeout=600.0,
+        "GET", audio_url, follow_redirects=True,
+        # Long read for big audio bodies, but a dead host fails the connect fast
+        # rather than burning the full 600s.
+        timeout=httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0),
         headers={"User-Agent": USER_AGENT},
     ) as resp:
         resp.raise_for_status()

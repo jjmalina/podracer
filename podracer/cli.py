@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import socket
 import sys
 
 import uvicorn
@@ -30,7 +31,7 @@ from podracer.db import (
     upsert_podcast,
 )
 from podracer.download import download_episode, ensure_artwork_cached
-from podracer.feed import fetch_feed, fetch_feed_metadata
+from podracer.feed import configure_timeouts, fetch_feed, fetch_feed_metadata
 from podracer.logging_config import configure_logging
 from podracer.process import (
     apply_feed,
@@ -412,6 +413,11 @@ def cmd_process(args):
 
 def cmd_worker(args):
     cfg = _config()
+    configure_timeouts(cfg.feed_connect_timeout_seconds, cfg.feed_read_timeout_seconds)
+    # Last-resort cap for any un-timed blocking socket I/O a dependency might do;
+    # real per-call timeouts (httpx, feed fetch) are tighter. Prevents a repeat
+    # of the worker hanging indefinitely on a network read.
+    socket.setdefaulttimeout(120)
     conn = _db()
     worker = Worker(conn, cfg)
     if args.once:

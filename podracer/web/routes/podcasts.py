@@ -94,7 +94,14 @@ def podcast_sync(request: Request, podcast_id: int, db: sqlite3.Connection = Dep
 @router.post("/podcasts/sync-all")
 def podcast_sync_all(request: Request, db: sqlite3.Connection = Depends(get_db)):
     for podcast in get_all_podcasts(db):
-        sync_podcast(db, podcast.id, podcast.feed_url)
+        try:
+            sync_podcast(db, podcast.id, podcast.feed_url)
+        except Exception:
+            # A single dead/slow feed (feed fetch can now raise) must not abort
+            # the whole batch — drop its partial writes, log, and keep going so
+            # the remaining podcasts still sync. Mirrors Worker._sync_feeds.
+            db.rollback()
+            logger.exception("sync_all_feed_failed", podcast=podcast.title)
     return RedirectResponse(url="/podcasts", status_code=303)
 
 
