@@ -26,6 +26,7 @@ from podracer.db import (
 from podracer.download import ensure_artwork_cached
 from podracer.models import Job
 from podracer.process import summarize_episode, sync_podcast, transcribe_episode
+from podracer.sd_notify import notify
 
 
 def _utcnow_iso() -> str:
@@ -65,11 +66,19 @@ class Worker:
             logger.info("orphan_recovery", requeued=requeued)
         init_worker_watermark(self.conn)
 
+        # Startup init is done; tell systemd we're ready. From here on we send
+        # WATCHDOG=1 wherever the loop makes progress (top of each iteration and
+        # once per sync/drain step) so a hang stops the pings. The homelab unit
+        # sets WatchdogSec larger than the worst-case single-job processing time,
+        # so these mid-operation pings keep the loop "alive" between long ops.
+        notify("READY=1")
+
         sync_interval = self.cfg.sync_interval_minutes * 60
         drain_interval = self.cfg.drain_interval_seconds
         last_sync = 0.0  # forces a sync on the first iteration
 
         while not self.shutdown.is_set():
+            notify("WATCHDOG=1")
             now = time.monotonic()
             try:
                 if now - last_sync >= sync_interval:
@@ -89,6 +98,7 @@ class Worker:
         for podcast in podcasts:
             if self.shutdown.is_set():
                 return
+            notify("WATCHDOG=1")  # a slow feed fetch shouldn't trip the watchdog
             try:
                 # Upserts episodes, bumps last_synced_at, and refreshes topic
                 # tags from the feed's iTunes categories — one shared path.
@@ -123,6 +133,7 @@ class Worker:
 
     def _drain_queue(self) -> None:
         while not self.shutdown.is_set():
+            notify("WATCHDOG=1")  # ping before each (possibly long) job runs
             job = claim_next_job(self.conn)
             if job is None:
                 return
