@@ -19,6 +19,7 @@ from podracer.logging_config import configure_logging
 from podracer.sentry_config import configure_sentry
 from podracer.web.routes.api import API_PREFIX, SCHEMA_VERSION
 from podracer.web.routes.api import router as api_router
+from podracer.web.routes.digests import router as digests_router
 from podracer.web.routes.episodes import router as episodes_router
 from podracer.web.routes.feed import router as feed_router
 from podracer.web.routes.jobs import router as jobs_router
@@ -96,6 +97,7 @@ def create_app(cfg: Config) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     app.include_router(feed_router)
+    app.include_router(digests_router)
     app.include_router(podcasts_router)
     app.include_router(episodes_router)
     app.include_router(search_router)

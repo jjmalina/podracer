@@ -11,6 +11,15 @@ from podracer.db.connection import (
     init_db,
     set_config,
 )
+from podracer.db.digests import (
+    count_digest_members,
+    count_digests,
+    digest_exists,
+    get_digest,
+    get_digest_members,
+    get_digests,
+    save_digest,
+)
 from podracer.db.episodes import (
     count_episodes,
     count_recent_episodes,
@@ -58,6 +67,7 @@ from podracer.db.podcasts import (
     set_podcast_artwork_path,
     set_podcast_tags,
     subscribe,
+    topics_by_podcast,
     unsubscribe,
     update_podcast_synced,
     upsert_podcast,
@@ -82,7 +92,10 @@ __all__ = [
     "upsert_podcast", "subscribe", "unsubscribe", "get_podcast",
     "get_subscribed_podcasts", "get_all_podcasts", "update_podcast_synced",
     "set_podcast_artwork_path", "set_podcast_tags", "get_all_tags",
-    "get_podcasts", "count_podcasts",
+    "get_podcasts", "count_podcasts", "topics_by_podcast",
+    # digests
+    "save_digest", "get_digest", "get_digests", "count_digests",
+    "digest_exists", "get_digest_members", "count_digest_members",
     # episodes
     "upsert_episode", "get_episode", "get_episodes", "get_episode_count",
     "update_episode_download", "get_recent_episodes", "count_recent_episodes",
