@@ -3,8 +3,73 @@ import re
 from datetime import datetime
 
 import feedparser
+import httpx
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
+from podracer import USER_AGENT
 from podracer.models import FeedEpisode, FeedMetadata
+
+# Feed-fetch timeouts. feedparser.parse() does its own *un-timed* urllib fetch
+# when handed a URL — an infinite read there hung the single-threaded worker for
+# ~21.5h on 2026-06-24. So we fetch the bytes with httpx (real connect/read
+# timeouts) and parse those instead. Defaults are used by CLI/one-off callers;
+# the long-running entry points (worker, web server) override them from config
+# via configure_timeouts() at startup.
+_connect_timeout: float = 10.0
+_read_timeout: float = 30.0
+
+
+def configure_timeouts(connect_seconds: float, read_seconds: float) -> None:
+    """Set the feed-fetch connect/read timeouts (called once at startup)."""
+    global _connect_timeout, _read_timeout
+    _connect_timeout = connect_seconds
+    _read_timeout = read_seconds
+
+
+@retry(
+    retry=retry_if_exception_type(
+        (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout),
+    ),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, max=10),
+    reraise=True,
+)
+def _fetch_feed_bytes(feed_url: str) -> tuple[bytes, str | None]:
+    """Fetch raw feed bytes (+ the HTTP Content-Type) with bounded timeouts.
+
+    Follows redirects. Retries transient connect/read timeouts a few times, then
+    re-raises so the caller's per-feed error handling (Worker._sync_feeds) logs
+    it and moves on — rather than blocking forever on a dead/slow host. Returns
+    the Content-Type header alongside the body so the parser can recover the
+    charset (see _fetch_parsed_feed)."""
+    timeout = httpx.Timeout(
+        connect=_connect_timeout, read=_read_timeout,
+        write=_connect_timeout, pool=_connect_timeout,
+    )
+    resp = httpx.get(
+        feed_url, follow_redirects=True, timeout=timeout,
+        headers={"User-Agent": USER_AGENT},
+    )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("content-type")
+
+
+def _fetch_parsed_feed(feed_url: str):
+    """Fetch a feed over HTTP and hand the bytes to feedparser.
+
+    feedparser can't see the HTTP response once we give it bytes instead of a
+    URL, so a feed that declares its charset only in the Content-Type header
+    (no <?xml encoding?> declaration) would be mis-decoded into mojibake. We
+    forward the header via response_headers so encoding detection matches the
+    old feedparser.parse(url) behavior."""
+    content, content_type = _fetch_feed_bytes(feed_url)
+    response_headers = {"content-type": content_type} if content_type else {}
+    return feedparser.parse(content, response_headers=response_headers)
 
 
 def parse_duration(duration_str: str | None) -> int | None:
@@ -167,12 +232,12 @@ def _parse_episodes(feed, limit: int | None = None) -> list[FeedEpisode]:
 
 
 def fetch_feed_metadata(feed_url: str) -> FeedMetadata:
-    feed = feedparser.parse(feed_url)
+    feed = _fetch_parsed_feed(feed_url)
     return _parse_metadata(feed.feed, feed_url)
 
 
 def fetch_episodes(feed_url: str, limit: int | None = None) -> list[FeedEpisode]:
-    feed = feedparser.parse(feed_url)
+    feed = _fetch_parsed_feed(feed_url)
     return _parse_episodes(feed, limit)
 
 
@@ -181,5 +246,5 @@ def fetch_feed(
 ) -> tuple[FeedMetadata, list[FeedEpisode]]:
     """Metadata + episodes from a single parse — for sync paths that need both
     (episodes to upsert, categories to (re)tag) without downloading twice."""
-    feed = feedparser.parse(feed_url)
+    feed = _fetch_parsed_feed(feed_url)
     return _parse_metadata(feed.feed, feed_url), _parse_episodes(feed, limit)

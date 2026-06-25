@@ -49,6 +49,8 @@ class Config:
     drain_interval_seconds: int = 10     # how often to check the job queue
     max_attempts: int = 3
     retry_backoff_seconds: int = 300
+    feed_connect_timeout_seconds: int = 10   # feed fetch: connect timeout
+    feed_read_timeout_seconds: int = 30      # feed fetch: read timeout
 
     # Logging: "auto" (console on a TTY, JSON otherwise) | "console" | "json".
     # The PODRACER_LOG_FORMAT env var overrides this.
@@ -159,6 +161,12 @@ def load_config() -> Config:
         config.drain_interval_seconds = daemon.get("drain_interval_seconds", config.drain_interval_seconds)
         config.max_attempts = daemon.get("max_attempts", config.max_attempts)
         config.retry_backoff_seconds = daemon.get("retry_backoff_seconds", config.retry_backoff_seconds)
+        config.feed_connect_timeout_seconds = daemon.get(
+            "feed_connect_timeout_seconds", config.feed_connect_timeout_seconds,
+        )
+        config.feed_read_timeout_seconds = daemon.get(
+            "feed_read_timeout_seconds", config.feed_read_timeout_seconds,
+        )
 
         logging_cfg = data.get("logging", {})
         config.log_format = logging_cfg.get("format", config.log_format)
