@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} — Digest — podracer{% endblock %}
+{% block content %}
+<p class="eyebrow">{{ 'Weekly digest' if rec.kind == 'week' else 'Daily digest' }}</p>
+<h1>{{ label }}</h1>
+<p class="meta-line">
+  {{ rec.episode_count }} episode{{ '' if rec.episode_count == 1 else 's' }}{% if data %}
+  · {{ data.topics | length }} topic{{ '' if data.topics | length == 1 else 's' }}{% endif %}
+  · generated {{ relative_time(rec.created_at) }}
+</p>
+
+{% if flash %}
+  {% if flash == 'regenerated' %}
+  <p role="alert" class="flash">Digest regenerated.</p>
+  {% elif flash == 'regenerate-failed' %}
+  <p role="alert" class="flash flash-warn">Regeneration failed — check the logs.</p>
+  {% else %}
+  <p role="alert" class="flash flash-warn">{{ flash }}</p>
+  {% endif %}
+{% endif %}
+
+{% if data %}
+<p class="digest-overview">{{ data.overview }}</p>
+
+{% for t in data.topics %}
+<section class="digest-topic">
+  <h2>{{ t.topic }} <span class="digest-topic-count">{{ t.episode_count }}</span></h2>
+  {% for s in t.shows %}
+  <div class="digest-show">
+    <a class="digest-show-name" href="/podcasts/{{ s.podcast_id }}">{{ s.podcast_title }}</a>
+    <ul class="digest-eps">
+      {% for e in s.episodes %}
+      <li class="digest-ep">
+        <a class="digest-ep-title" href="/episodes/{{ e.episode_id }}">{{ e.title }}</a>
+        <p class="digest-ep-blurb">{{ e.blurb }}</p>
+        {% if e.highlights %}
+        <ul class="digest-ep-highlights">
+          {% for h in e.highlights %}<li>{{ h }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}
+{% else %}
+<p class="feed-empty">This digest could not be rendered.</p>
+{% endif %}
+
+<div class="digest-footer">
+  <a class="digest-back" href="/digests?kind={{ rec.kind }}">‹ All digests</a>
+  <form method="post" action="/digests/{{ rec.kind }}/{{ rec.period_start }}/regenerate"
+        class="digest-actions"
+        onsubmit="return confirm('Regenerate this {{ rec.kind }} digest? This re-runs the model over the period’s summaries.');">
+    <button type="submit" class="outline btn-small">Regenerate</button>
+  </form>
+</div>
+{% endblock %}

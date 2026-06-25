@@ -3,14 +3,17 @@ import json
 import logging
 import socket
 import sys
+from datetime import date, timedelta
 
 import uvicorn
 
 from podracer import logger
 from podracer.config import Config, load_config
 from podracer.db import (
+    digest_exists,
     get_all_podcasts,
     get_connection,
+    get_digest,
     get_episode,
     get_episodes,
     get_failed_jobs,
@@ -29,6 +32,16 @@ from podracer.db import (
     unsubscribe,
     update_episode_download,
     upsert_podcast,
+)
+from podracer.digest import (
+    DigestData,
+    Period,
+    day_period,
+    due_periods,
+    format_period_label,
+    generate_and_save,
+    local_today,
+    week_period,
 )
 from podracer.download import download_episode, ensure_artwork_cached
 from podracer.feed import configure_timeouts, fetch_feed, fetch_feed_metadata
@@ -367,6 +380,136 @@ def cmd_summarize(args):
         print_summary(result)
 
 
+def _digest_payload(period: Period, data: DigestData) -> dict:
+    return {
+        "kind": period.kind,
+        "period_start": period.start_str,
+        "period_end": period.end_str,
+        "label": format_period_label(period.kind, period.start, period.end),
+        "episode_count": data.episode_count,
+        "overview": data.overview,
+        "topics": [t.model_dump() for t in data.topics],
+    }
+
+
+def _print_digest(period: Period, data: DigestData) -> None:
+    label = format_period_label(period.kind, period.start, period.end)
+    print(f"\n  {label}  ({data.episode_count} episodes)")
+    print(f"  {'─' * 72}")
+    print(f"  {data.overview}\n")
+    for t in data.topics:
+        print(f"  {t.topic.upper()}  ({t.episode_count})")
+        for s in t.shows:
+            print(f"    {s.podcast_title}")
+            for e in s.episodes:
+                print(f"      {e.title}")
+                print(f"        {e.blurb}")
+                for h in e.highlights:
+                    print(f"          - {h}")
+        print()
+
+
+def _range_periods(a: date, b: date) -> list[Period]:
+    """Daily periods for each day in [a, b], plus the weeks they fall in (weeklies
+    last so they can reuse the dailies they're built from)."""
+    periods: list[Period] = []
+    weeks: dict[date, Period] = {}
+    d = a
+    while d <= b:
+        periods.append(day_period(d))
+        wp = week_period(d)
+        weeks[wp.start] = wp
+        d += timedelta(days=1)
+    periods.extend(weeks.values())
+    return periods
+
+
+def _run_periods(conn, cfg, periods, *, skip_existing: bool, json_output: bool) -> None:
+    out: list[tuple[Period, DigestData]] = []
+    for p in periods:
+        if skip_existing and digest_exists(conn, p.kind, p.start_str):
+            logger.info("digest_skip_existing", kind=p.kind, start=p.start_str)
+            continue
+        try:
+            data = generate_and_save(conn, cfg, p)
+        except Exception as e:
+            logger.error("digest generation failed for %s %s: %s", p.kind, p.start_str, e)
+            continue
+        if data is not None:
+            out.append((p, data))
+
+    if json_output:
+        print(json.dumps([_digest_payload(p, d) for p, d in out], indent=2))
+        return
+    for p, d in out:
+        label = format_period_label(p.kind, p.start, p.end)
+        print(f"Generated {p.kind} digest — {label}: {d.episode_count} episodes, {len(d.topics)} topics")
+    if not out:
+        print("Nothing generated.")
+
+
+def cmd_digest(args):
+    conn = _db()
+    cfg = _config()
+
+    # --show: print a stored digest, no LLM. Kind is 'week' when --week is given,
+    # else 'day'; the date comes from --show's value, --date, or --week.
+    if args.show is not None:
+        if args.week:
+            period = week_period(date.fromisoformat(args.week))
+        elif args.show:
+            period = day_period(date.fromisoformat(args.show))
+        elif args.date:
+            period = day_period(date.fromisoformat(args.date))
+        else:
+            logger.error("Specify a date to show: `--show YYYY-MM-DD` or `--show --week YYYY-MM-DD`.")
+            sys.exit(1)
+        rec = get_digest(conn, period.kind, period.start_str)
+        if not rec:
+            logger.error("No %s digest stored for %s.", period.kind, period.start_str)
+            sys.exit(1)
+        data = DigestData.model_validate_json(rec.data)
+        if args.json:
+            print(json.dumps(_digest_payload(period, data), indent=2))
+        else:
+            _print_digest(period, data)
+        return
+
+    # --backfill-days N: the last N days (ending yesterday), plus their weeks.
+    # The one-shot way to seed history after a deploy — the watermark stops the
+    # scheduler from auto-generating anything before its first run.
+    if args.backfill_days:
+        today = local_today(cfg)
+        a, b = today - timedelta(days=args.backfill_days), today - timedelta(days=1)
+        _run_periods(conn, cfg, _range_periods(a, b), skip_existing=not args.force, json_output=args.json)
+        return
+
+    # --backfill A..B: every day in the range, plus the weeks they fall in.
+    if args.backfill:
+        a_str, sep, b_str = args.backfill.partition("..")
+        if not sep:
+            logger.error("--backfill expects a range like 2026-06-01..2026-06-23")
+            sys.exit(1)
+        a, b = date.fromisoformat(a_str.strip()), date.fromisoformat(b_str.strip())
+        if b < a:
+            a, b = b, a
+        _run_periods(conn, cfg, _range_periods(a, b), skip_existing=not args.force, json_output=args.json)
+        return
+
+    # Explicit single target: always (re)generate it.
+    if args.date:
+        _run_periods(conn, cfg, [day_period(date.fromisoformat(args.date))],
+                     skip_existing=False, json_output=args.json)
+        return
+    if args.week:
+        _run_periods(conn, cfg, [week_period(date.fromisoformat(args.week))],
+                     skip_existing=False, json_output=args.json)
+        return
+
+    # No target: generate whatever is due (missing or stale), like a worker tick.
+    _run_periods(conn, cfg, due_periods(conn, cfg), skip_existing=False, json_output=args.json)
+
+
 def cmd_serve(args):
     # log_config=None: don't let uvicorn install its own logging config, so its
     # access/error loggers propagate to the root handler set up by
@@ -619,6 +762,19 @@ def main():
 
     p_status = subparsers.add_parser("status", help="Show queue state for ops/debugging")
     p_status.set_defaults(func=cmd_status)
+
+    p_digest = subparsers.add_parser(
+        "digest", help="Generate or print daily/weekly digests")
+    p_digest.add_argument("--date", help="(Re)generate the daily digest for YYYY-MM-DD")
+    p_digest.add_argument("--week", help="(Re)generate the weekly digest for the ISO week containing YYYY-MM-DD")
+    p_digest.add_argument("--backfill", help="Generate digests for a date range, e.g. 2026-06-01..2026-06-23")
+    p_digest.add_argument("--backfill-days", type=int, metavar="N",
+                          help="Generate digests for the last N days (ending yesterday) + their weeks")
+    p_digest.add_argument("--force", action="store_true",
+                          help="With --backfill/--backfill-days, regenerate periods that already exist")
+    p_digest.add_argument("--show", nargs="?", const="", default=None,
+                          help="Print a stored digest (no LLM). Pass a date, or combine with --week.")
+    p_digest.set_defaults(func=cmd_digest)
 
     p_backfill_artwork = subparsers.add_parser(
         "backfill-artwork", help="Cache cover art for subscribed podcasts")
