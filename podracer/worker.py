@@ -20,12 +20,14 @@ from podracer.db import (
     mark_job_done,
     mark_job_failed,
     reset_running_jobs,
+    set_worker_heartbeat,
     set_worker_last_sync,
     set_worker_watermark,
 )
 from podracer.download import ensure_artwork_cached
 from podracer.models import Job
 from podracer.process import summarize_episode, sync_podcast, transcribe_episode
+from podracer.sd_notify import notify
 
 
 def _utcnow_iso() -> str:
@@ -65,11 +67,19 @@ class Worker:
             logger.info("orphan_recovery", requeued=requeued)
         init_worker_watermark(self.conn)
 
+        # Startup init is done; tell systemd we're ready. From here on we call
+        # _progress() wherever the loop makes progress (top of each iteration and
+        # once per sync/drain step) so a hang stops the pings. The homelab unit
+        # sets WatchdogSec larger than the worst-case single-job processing time,
+        # so these mid-operation pings keep the loop "alive" between long ops.
+        notify("READY=1")
+
         sync_interval = self.cfg.sync_interval_minutes * 60
         drain_interval = self.cfg.drain_interval_seconds
         last_sync = 0.0  # forces a sync on the first iteration
 
         while not self.shutdown.is_set():
+            self._progress()
             now = time.monotonic()
             try:
                 if now - last_sync >= sync_interval:
@@ -84,11 +94,29 @@ class Worker:
 
     # --- internals ---
 
+    def _progress(self) -> None:
+        """Signal loop liveness at a point where the worker just made progress.
+
+        Two consumers, kept in lockstep so they can't disagree about whether the
+        worker is alive:
+          - systemd: WATCHDOG=1 resets WatchdogSec (kills+restarts a hung unit).
+          - /health: worker_heartbeat is the timestamp the endpoint reads. Unlike
+            last_sync (advanced only once per feed-sync), this advances before
+            every job too, so a long queue drain no longer looks stale.
+        Best-effort: a heartbeat write must never crash the loop.
+        """
+        notify("WATCHDOG=1")
+        try:
+            set_worker_heartbeat(self.conn, _utcnow_iso())
+        except Exception:
+            logger.exception("heartbeat_write_failed")
+
     def _sync_feeds(self) -> None:
         podcasts = get_subscribed_podcasts(self.conn)
         for podcast in podcasts:
             if self.shutdown.is_set():
                 return
+            self._progress()  # a slow feed fetch shouldn't trip the watchdog
             try:
                 # Upserts episodes, bumps last_synced_at, and refreshes topic
                 # tags from the feed's iTunes categories — one shared path.
@@ -123,6 +151,7 @@ class Worker:
 
     def _drain_queue(self) -> None:
         while not self.shutdown.is_set():
+            self._progress()  # ping before each (possibly long) job runs
             job = claim_next_job(self.conn)
             if job is None:
                 return
