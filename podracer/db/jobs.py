@@ -5,6 +5,7 @@ from podracer.models import Job
 
 WATERMARK_KEY = "worker_watermark"
 LAST_SYNC_KEY = "worker_last_sync"
+HEARTBEAT_KEY = "worker_heartbeat"
 
 # Statuses that count as an episode having an in-flight job. The correlated
 # subselect below is the single place the listing queries (db/episodes.py) get
@@ -57,6 +58,18 @@ def set_worker_last_sync(conn: sqlite3.Connection, iso_ts: str) -> None:
 
 def get_worker_last_sync(conn: sqlite3.Connection) -> str | None:
     return get_config(conn, LAST_SYNC_KEY)
+
+
+def set_worker_heartbeat(conn: sqlite3.Connection, iso_ts: str) -> None:
+    """Progress ping written wherever the loop moves forward (each iteration,
+    each feed, before each job) — the /health liveness signal. Distinct from
+    last_sync, which only advances once per feed-sync and so goes stale during a
+    long queue drain even while the worker is healthy."""
+    set_config(conn, HEARTBEAT_KEY, iso_ts)
+
+
+def get_worker_heartbeat(conn: sqlite3.Connection) -> str | None:
+    return get_config(conn, HEARTBEAT_KEY)
 
 
 # ---------- Enqueue + discovery ----------

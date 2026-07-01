@@ -21,6 +21,7 @@ from podracer.web.routes.api import API_PREFIX, SCHEMA_VERSION
 from podracer.web.routes.api import router as api_router
 from podracer.web.routes.episodes import router as episodes_router
 from podracer.web.routes.feed import router as feed_router
+from podracer.web.routes.health import router as health_router
 from podracer.web.routes.jobs import router as jobs_router
 from podracer.web.routes.podcasts import router as podcasts_router
 from podracer.web.routes.search import router as search_router
@@ -100,6 +101,7 @@ def create_app(cfg: Config) -> FastAPI:
     app.include_router(episodes_router)
     app.include_router(search_router)
     app.include_router(jobs_router)
+    app.include_router(health_router)
     app.include_router(api_router)
 
     # An outbound feed fetch can now raise (bounded timeouts + raise_for_status,

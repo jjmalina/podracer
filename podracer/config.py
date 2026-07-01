@@ -51,6 +51,13 @@ class Config:
     retry_backoff_seconds: int = 300
     feed_connect_timeout_seconds: int = 10   # feed fetch: connect timeout
     feed_read_timeout_seconds: int = 30      # feed fetch: read timeout
+    # /health reports "stale" if the worker's progress heartbeat is older than
+    # this. Must exceed the worst-case gap between heartbeats — one job's longest
+    # run (download 600s + Deepgram 1800s ≈ 2400s) — or a healthy long job trips
+    # it. Default 3600s mirrors the systemd WatchdogSec so /health never fires
+    # before systemd would already have restarted the worker. Tied to job time,
+    # not sync_interval, so a short sync interval doesn't cause false staleness.
+    health_heartbeat_max_age_seconds: int = 3600
 
     # Logging: "auto" (console on a TTY, JSON otherwise) | "console" | "json".
     # The PODRACER_LOG_FORMAT env var overrides this.
@@ -166,6 +173,9 @@ def load_config() -> Config:
         )
         config.feed_read_timeout_seconds = daemon.get(
             "feed_read_timeout_seconds", config.feed_read_timeout_seconds,
+        )
+        config.health_heartbeat_max_age_seconds = daemon.get(
+            "health_heartbeat_max_age_seconds", config.health_heartbeat_max_age_seconds,
         )
 
         logging_cfg = data.get("logging", {})
