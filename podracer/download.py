@@ -24,8 +24,14 @@ def slugify(text: str) -> str:
 
 
 def download_episode(audio_url: str, media_dir: str, podcast_title: str,
-                     episode_title: str) -> tuple[str, int]:
-    """Download an episode and return (relative_path, file_size_bytes)."""
+                     episode_title: str, *, force: bool = False) -> tuple[str, int]:
+    """Download an episode and return (relative_path, file_size_bytes).
+
+    The on-disk path is derived deterministically from the titles, so a normal
+    call returns any existing file as-is. force=True re-fetches and overwrites
+    it — needed to correct a bad/stale cached download (the audio the feed
+    served at download time was wrong).
+    """
     ext = Path(urlparse(audio_url).path).suffix or ".mp3"
     podcast_slug = slugify(podcast_title)
     episode_slug = slugify(episode_title)
@@ -33,7 +39,7 @@ def download_episode(audio_url: str, media_dir: str, podcast_title: str,
     full_path = Path(media_dir) / relative_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if full_path.exists():
+    if not force and full_path.exists():
         return relative_path, full_path.stat().st_size
 
     with httpx.stream(
