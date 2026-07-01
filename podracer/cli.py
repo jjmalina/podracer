@@ -37,6 +37,7 @@ from podracer.process import (
     apply_feed,
     process_episode,
     queue_latest_unprocessed_episode,
+    resolve_audio_path,
     summarize_episode,
     sync_podcast,
 )
@@ -285,22 +286,14 @@ def cmd_transcribe(args):
             print(existing.text)
         return
 
-    media_dir = _config().media_dir
-    if not episode.local_path or episode.status == "pending":
-        podcast = get_podcast(conn, episode.podcast_id)
-        if not podcast:
-            logger.error("Podcast not found for episode %s.", episode.id)
-            sys.exit(1)
-        logger.info("Downloading first: %s", episode.title)
-        relative_path, size = download_episode(
-            episode.audio_url, media_dir, podcast.title, episode.title,
-        )
-        update_episode_download(conn, episode.id, relative_path, size)
-        audio_path = f"{media_dir}{relative_path}"
-    else:
-        audio_path = f"{media_dir}{episode.local_path}"
-
     cfg = _config()
+    # Shared download path (honours --force to re-fetch a bad cached download).
+    try:
+        audio_path = resolve_audio_path(conn, cfg, episode, force=args.force)
+    except RuntimeError as e:  # e.g. orphaned episode (podcast row missing)
+        logger.error("%s", e)
+        sys.exit(1)
+
     backend = args.backend or cfg.transcribe_backend
     model = args.model or cfg.transcribe_deepgram_model
     diarize = not args.no_diarize
@@ -580,7 +573,8 @@ def main():
                               help="Transcription backend (default: from config)")
     p_transcribe.add_argument("--model", default=None, help="Deepgram model name (default: from config)")
     p_transcribe.add_argument("--no-diarize", action="store_true", help="Skip speaker diarization")
-    p_transcribe.add_argument("--force", action="store_true", help="Re-transcribe even if transcript exists")
+    p_transcribe.add_argument("--force", action="store_true",
+                              help="Re-download and re-transcribe even if a transcript exists")
     p_transcribe.set_defaults(func=cmd_transcribe)
 
     p_summarize = subparsers.add_parser("summarize", help="Summarize an episode")
@@ -598,7 +592,8 @@ def main():
     p_process.add_argument("--backend", choices=["ollama", "vllm", "openrouter"], default=None,
                            help="Inference backend")
     p_process.add_argument("--base-url", default=None, help="Backend API base URL")
-    p_process.add_argument("--force", action="store_true", help="Redo transcription and summarization")
+    p_process.add_argument("--force", action="store_true",
+                           help="Redo download, transcription, and summarization")
     p_process.set_defaults(func=cmd_process)
 
     p_serve = subparsers.add_parser("serve", help="Start the web UI")

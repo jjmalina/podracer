@@ -64,16 +64,26 @@ def sync_podcast(
     return apply_feed(conn, podcast_id, meta, episodes)
 
 
-def _resolve_audio_path(conn: sqlite3.Connection, cfg: Config, episode) -> str:
+def resolve_audio_path(
+    conn: sqlite3.Connection, cfg: Config, episode, *, force: bool = False,
+) -> str:
+    """Return a local path to the episode's audio, downloading if needed.
+
+    force=True re-downloads even when a local copy exists — needed when the
+    cached audio is wrong (e.g. the feed served a stale/placeholder enclosure at
+    download time and later corrected it). force is passed through to
+    download_episode, which otherwise returns the deterministically-named cached
+    file without re-fetching.
+    """
     media_dir = cfg.media_dir
-    if episode.local_path and episode.status != "pending":
+    if not force and episode.local_path and episode.status != "pending":
         return f"{media_dir}{episode.local_path}"
     podcast = get_podcast(conn, episode.podcast_id)
     if not podcast:
         raise RuntimeError(f"podcast {episode.podcast_id} not found for episode {episode.id}")
     logger.info("Downloading: %s", episode.title)
     relative_path, size = download_episode(
-        episode.audio_url, media_dir, podcast.title, episode.title,
+        episode.audio_url, media_dir, podcast.title, episode.title, force=force,
     )
     update_episode_download(conn, episode.id, relative_path, size)
     return f"{media_dir}{relative_path}"
@@ -82,7 +92,11 @@ def _resolve_audio_path(conn: sqlite3.Connection, cfg: Config, episode) -> str:
 def transcribe_episode(
     conn: sqlite3.Connection, cfg: Config, episode_id: int, *, force: bool = False,
 ) -> None:
-    """Ensure the episode is downloaded, then transcribe it. Idempotent."""
+    """Ensure the episode is downloaded, then transcribe it. Idempotent.
+
+    force=True re-downloads the audio (even if a local copy exists) and
+    re-transcribes, so a bad cached download can be corrected in one call.
+    """
     episode = get_episode(conn, episode_id)
     if not episode:
         raise RuntimeError(f"episode {episode_id} not found")
@@ -91,7 +105,7 @@ def transcribe_episode(
         logger.info("Transcript exists for %s, skipping.", episode.title)
         return
 
-    audio_path = _resolve_audio_path(conn, cfg, episode)
+    audio_path = resolve_audio_path(conn, cfg, episode, force=force)
 
     backend = cfg.transcribe_backend
     if backend == "deepgram":
