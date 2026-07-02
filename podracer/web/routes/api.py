@@ -17,10 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from podracer.db import (
+    count_digests,
     count_episodes,
     count_podcasts,
     get_active_kind,
     get_all_tags,
+    get_digest,
+    get_digests,
     get_episode,
     get_podcast,
     get_podcasts,
@@ -30,6 +33,7 @@ from podracer.db import (
     summary_exists,
     transcript_exists,
 )
+from podracer.digest import DigestData, DigestTopic
 from podracer.models import EpisodeListItem, Transcript
 from podracer.summarize import (
     Chapter,
@@ -55,6 +59,10 @@ SUMMARY_MAX_LIMIT = 50    # lower cap when ?include=summary embeds full summarie
 # emits the enum (Swagger renders a dropdown) and FastAPI validates the query
 # value itself — a bad status is a 422 with no manual check.
 StatusFilter = Literal["pending", "downloaded", "transcribed", "summarized", "all"]
+
+# The two digest kinds; typed as a Literal so a bad value is a 422, and so the
+# path/query enum shows up in the OpenAPI schema.
+DigestKind = Literal["day", "week"]
 
 
 # --- response models ---------------------------------------------------------
@@ -135,6 +143,39 @@ class EpisodePage(BaseModel):
 
 class PodcastPage(BaseModel):
     items: list[ApiPodcast]
+    total: int
+    limit: int
+    offset: int
+
+
+class ApiDigest(BaseModel):
+    """A full digest: the LLM overview plus the topic -> show -> episode tree.
+    Mirrors the stored DigestData, with the period + provenance fields alongside."""
+    kind: str
+    period_start: str
+    period_end: str
+    overview: str
+    topics: list[DigestTopic]
+    episode_count: int
+    model: str
+    created_at: str | None = None
+
+
+class ApiDigestListItem(BaseModel):
+    """A list-response row: the overview + counts, without the full tree (fetch
+    the detail endpoint for that)."""
+    kind: str
+    period_start: str
+    period_end: str
+    overview: str
+    episode_count: int
+    topic_count: int
+    model: str
+    created_at: str | None = None
+
+
+class DigestPage(BaseModel):
+    items: list[ApiDigestListItem]
     total: int
     limit: int
     offset: int
@@ -325,6 +366,53 @@ def api_episode_transcript(
     if transcript is None:
         raise HTTPException(status_code=404, detail="transcript not found")
     return transcript
+
+
+# --- digests -----------------------------------------------------------------
+
+
+@router.get("/digests")
+def api_list_digests(
+    db: sqlite3.Connection = Depends(get_db),
+    kind: DigestKind | None = None,
+    limit: int = DEFAULT_LIMIT,
+    offset: int = 0,
+) -> DigestPage:
+    limit, offset = _clamp(limit, offset, include_summary=False)
+    total = count_digests(db, kind=kind)
+    rows = get_digests(db, kind=kind, limit=limit, offset=offset)
+    items: list[ApiDigestListItem] = []
+    for r in rows:
+        overview, topic_count = "", 0
+        try:
+            data = DigestData.model_validate_json(r.data)
+            overview, topic_count = data.overview, len(data.topics)
+        except Exception:
+            pass  # a corrupt blob shouldn't sink the whole list
+        items.append(ApiDigestListItem(
+            kind=r.kind, period_start=r.period_start, period_end=r.period_end,
+            overview=overview, episode_count=r.episode_count, topic_count=topic_count,
+            model=r.model, created_at=r.created_at,
+        ))
+    return DigestPage(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/digests/{kind}/{period_start}")
+def api_get_digest(
+    kind: DigestKind, period_start: str, db: sqlite3.Connection = Depends(get_db),
+) -> ApiDigest:
+    rec = get_digest(db, kind, period_start)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="digest not found")
+    try:
+        data = DigestData.model_validate_json(rec.data)
+    except Exception:
+        raise HTTPException(status_code=500, detail="stored digest could not be parsed") from None
+    return ApiDigest(
+        kind=rec.kind, period_start=rec.period_start, period_end=rec.period_end,
+        overview=data.overview, topics=data.topics, episode_count=rec.episode_count,
+        model=rec.model, created_at=rec.created_at,
+    )
 
 
 # --- discovery ---------------------------------------------------------------

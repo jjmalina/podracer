@@ -85,10 +85,30 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE TABLE IF NOT EXISTS podcast_tags (
     podcast_id INTEGER NOT NULL REFERENCES podcasts(id) ON DELETE CASCADE,
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    -- The feed's <itunes:category> order; topics[0] is the show's declared
+    -- primary category (used as the single topic a show is filed under in digests).
+    position INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (podcast_id, tag_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_podcast_tags_tag ON podcast_tags(tag_id);
+
+-- Daily/weekly digests: a stored "summary of summaries" for a local period.
+-- data holds the assembled DigestData JSON (topic -> show -> episode tree plus
+-- the LLM overview); membership is recomputed from episodes on regeneration, so
+-- UNIQUE(kind, period_start) makes a regenerate an upsert, like save_summary.
+CREATE TABLE IF NOT EXISTS digests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind          TEXT NOT NULL,              -- 'day' | 'week'
+    period_start  TEXT NOT NULL,              -- local date 'YYYY-MM-DD' (week = its Monday)
+    period_end    TEXT NOT NULL,              -- exclusive local date bound
+    data          TEXT NOT NULL,              -- DigestData JSON
+    episode_count INTEGER NOT NULL,           -- DISTINCT episodes in the period
+    model         TEXT NOT NULL,
+    backend       TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(kind, period_start)
+);
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_depends_on ON jobs(depends_on_job_id);
@@ -135,6 +155,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     if "artwork_path" not in pc_cols:
         conn.execute("ALTER TABLE podcasts ADD COLUMN artwork_path TEXT")
+
+    # Feed-order column for topic tags so topics[0] is the show's declared primary
+    # category. Existing rows default to 0; the next feed sync rewrites them in
+    # order (set_podcast_tags now compares order, not just the name set).
+    pt_cols = {row[1] for row in conn.execute("PRAGMA table_info(podcast_tags)").fetchall()}
+    if "position" not in pt_cols:
+        conn.execute("ALTER TABLE podcast_tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
 
     # Decode HTML entities in stored text fields. Earlier feed-ingest stripped
     # tags but left entities (&amp;, &nbsp;) as literal characters. Idempotent:

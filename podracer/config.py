@@ -59,6 +59,15 @@ class Config:
     # not sync_interval, so a short sync interval doesn't cause false staleness.
     health_heartbeat_max_age_seconds: int = 3600
 
+    # Digests (daily/weekly roundups). The LLM defaults to the summarize
+    # backend/model unless overridden below.
+    digest_enabled: bool = True
+    digest_timezone: str = "UTC"     # IANA name, e.g. "America/New_York" — SET THIS
+    digest_hour: int = 8             # local hour to finalize the previous period
+    digest_week_start: int = 0       # 0 = Monday (ISO); only Monday is honored in v1
+    digest_backend: str | None = None
+    digest_model: str | None = None
+
     # Logging: "auto" (console on a TTY, JSON otherwise) | "console" | "json".
     # The PODRACER_LOG_FORMAT env var overrides this.
     log_format: str = "auto"
@@ -177,6 +186,14 @@ def load_config() -> Config:
         config.health_heartbeat_max_age_seconds = daemon.get(
             "health_heartbeat_max_age_seconds", config.health_heartbeat_max_age_seconds,
         )
+
+        digest = data.get("digest", {})
+        config.digest_enabled = digest.get("enabled", config.digest_enabled)
+        config.digest_timezone = digest.get("timezone", config.digest_timezone)
+        config.digest_hour = digest.get("hour", config.digest_hour)
+        config.digest_week_start = digest.get("week_start", config.digest_week_start)
+        config.digest_backend = digest.get("backend", config.digest_backend)
+        config.digest_model = digest.get("model", config.digest_model)
 
         logging_cfg = data.get("logging", {})
         config.log_format = logging_cfg.get("format", config.log_format)

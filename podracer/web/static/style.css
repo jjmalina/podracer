@@ -938,3 +938,174 @@ a.pager-link:hover { color: var(--pr-accent); border-color: var(--pr-accent); }
   border-color: var(--pr-line);
   pointer-events: none;
 }
+
+/* ---------- digests ---------- */
+
+/* Pico v2 sets `li{list-style:square}` directly on the element, which beats a
+   `list-style:none` on the parent <ul>; suppress it on the <li> itself. */
+.digest-card,
+.digest-ep,
+.digest-ep-highlights li {
+  list-style: none;
+}
+
+.digest-list {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+}
+.digest-card {
+  background: var(--pr-surface);
+  border: 1px solid var(--pr-line);
+  border-left: 2px solid var(--pr-line);
+  border-radius: 2px;
+  padding: 1rem 1.25rem 0.9rem;
+  margin: 0 0 0.85rem;
+  transition: border-color 0.12s;
+}
+.digest-card:hover { border-left-color: var(--pr-accent); }
+.digest-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  text-decoration: none;
+}
+.digest-card-label {
+  font-family: var(--pr-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--pr-text);
+}
+.digest-card:hover .digest-card-label { color: var(--pr-accent); }
+.digest-card-count {
+  font-family: var(--pr-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--pr-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.digest-card-overview {
+  color: var(--pr-text);
+  margin: 0.6rem 0 0.75rem;
+  max-width: 72ch;
+}
+.digest-card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.digest-card-time {
+  margin-left: auto;
+  font-family: var(--pr-mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--pr-muted);
+}
+.digest-more {
+  font-family: var(--pr-mono);
+  font-size: 0.66rem;
+  color: var(--pr-muted);
+}
+
+/* Detail */
+.digest-overview {
+  font-size: 1.05rem;
+  line-height: 1.6;
+  color: var(--pr-text);
+  margin: 1.25rem 0 0.5rem;
+  max-width: 72ch;
+}
+.digest-topic h2 { margin: 2.25rem 0 1rem; }
+.digest-topic-count {
+  font-family: var(--pr-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--pr-accent);
+}
+.digest-show { margin: 0 0 1.1rem; }
+.digest-show-name {
+  font-family: var(--pr-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--pr-muted);
+  text-decoration: none;
+}
+.digest-show-name:hover { color: var(--pr-accent); }
+.digest-eps {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.digest-ep {
+  padding: 0.65rem 0 0.75rem;
+  border-top: 1px solid var(--pr-line);
+}
+.digest-ep:first-child { border-top: none; }
+.digest-ep-title {
+  display: inline-block;
+  font-family: var(--pr-display);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  color: var(--pr-text);
+  text-decoration: none;
+}
+.digest-ep-title:hover { color: var(--pr-accent); }
+.digest-ep-blurb {
+  margin: 0.35rem 0 0;
+  font-size: 0.95rem;
+  color: var(--pr-text);
+  line-height: 1.6;
+  max-width: 72ch;
+}
+.digest-ep-highlights {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-width: 72ch;
+}
+.digest-ep-highlights li {
+  position: relative;
+  padding-left: 1rem;
+  margin: 0.2rem 0;
+  font-size: 0.9rem;
+  color: var(--pr-muted);
+  line-height: 1.45;
+}
+.digest-ep-highlights li::before {
+  content: "–";
+  position: absolute;
+  left: 0;
+  color: var(--pr-accent);
+}
+
+.digest-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--pr-line);
+}
+.digest-actions { margin: 0; }
+.digest-back {
+  font-family: var(--pr-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  text-decoration: none;
+  color: var(--pr-muted);
+}
+.digest-back:hover { color: var(--pr-accent); }

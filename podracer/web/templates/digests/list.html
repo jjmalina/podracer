@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Digests — podracer{% endblock %}
+{% block content %}
+<p class="eyebrow">Digests</p>
+<h1>Daily &amp; weekly</h1>
+
+<div class="feed-controls">
+  <nav class="feed-status" aria-label="Digest kind">
+    <ul>
+      {% for k in kinds %}
+      <li><a href="/digests?kind={{ k }}" {% if kind == k %}class="active-filter"{% endif %}>{{ 'Daily' if k == 'day' else 'Weekly' }}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+</div>
+
+{% if cards %}
+<ul class="digest-list">
+  {% for c in cards %}
+  <li class="digest-card">
+    <a class="digest-card-head" href="/digests/{{ c.kind }}/{{ c.period_start }}">
+      <span class="digest-card-label">{{ c.label }}</span>
+      <span class="digest-card-count">{{ c.episode_count }} episode{{ '' if c.episode_count == 1 else 's' }}</span>
+    </a>
+    {% if c.overview %}<p class="digest-card-overview">{{ c.overview }}</p>{% endif %}
+    <div class="digest-card-foot">
+      {% for t in c.teaser %}
+      <span class="badge badge-topic">{{ t.topic }} · {{ t.count }}</span>
+      {% endfor %}
+      {% if c.topic_count > c.teaser | length %}
+      <span class="digest-more">+{{ c.topic_count - c.teaser | length }} more</span>
+      {% endif %}
+      <span class="digest-card-time">{{ relative_time(c.created_at) }}</span>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pagination">
+  {% if page > 1 %}
+  <a class="pager-link" href="/digests?kind={{ kind }}&amp;page={{ page - 1 }}">‹ Newer</a>
+  {% else %}
+  <span class="pager-link pager-disabled">‹ Newer</span>
+  {% endif %}
+  <span class="pager-status">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}
+  <a class="pager-link" href="/digests?kind={{ kind }}&amp;page={{ page + 1 }}">Older ›</a>
+  {% else %}
+  <span class="pager-link pager-disabled">Older ›</span>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% else %}
+<p class="feed-empty">
+  No {{ 'weekly' if kind == 'week' else 'daily' }} digests yet. They’re finalized
+  the morning after each period closes — or run <code>podracer digest</code>.
+</p>
+{% endif %}
+{% endblock %}

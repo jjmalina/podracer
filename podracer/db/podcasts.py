@@ -7,22 +7,33 @@ def _from_row(row: sqlite3.Row) -> Podcast:
     return Podcast(**{k: row[k] for k in row.keys()})
 
 
-def _attach_topics(conn: sqlite3.Connection, podcasts: list[Podcast]) -> list[Podcast]:
-    """Populate each podcast's .topics in one batched query (avoids N+1)."""
-    if not podcasts:
-        return podcasts
-    ids = [p.id for p in podcasts]
+def topics_by_podcast(conn: sqlite3.Connection, ids: list[int]) -> dict[int, list[str]]:
+    """Map each podcast_id to its topic tag names in feed-declared order (so
+    topics[0] is the show's primary category) in one query.
+
+    The shared batched lookup behind _attach_topics; the digest builder reuses it
+    to tag its members without round-tripping through Podcast objects."""
+    if not ids:
+        return {}
     placeholders = ",".join("?" * len(ids))
     rows = conn.execute(
         f"""SELECT pt.podcast_id AS podcast_id, t.name AS name
             FROM podcast_tags pt JOIN tags t ON t.id = pt.tag_id
             WHERE pt.podcast_id IN ({placeholders})
-            ORDER BY t.name COLLATE NOCASE""",
+            ORDER BY pt.position, t.name COLLATE NOCASE""",
         ids,
     ).fetchall()
     by_id: dict[int, list[str]] = {}
     for r in rows:
         by_id.setdefault(r["podcast_id"], []).append(r["name"])
+    return by_id
+
+
+def _attach_topics(conn: sqlite3.Connection, podcasts: list[Podcast]) -> list[Podcast]:
+    """Populate each podcast's .topics in one batched query (avoids N+1)."""
+    if not podcasts:
+        return podcasts
+    by_id = topics_by_podcast(conn, [p.id for p in podcasts])
     for p in podcasts:
         p.topics = by_id.get(p.id, [])
     return podcasts
@@ -198,24 +209,26 @@ def set_podcast_tags(conn: sqlite3.Connection, podcast_id: int, names: list[str]
     if not desired:
         return
 
-    current = {
+    # Compare names *and* order: re-rank when the feed reorders categories, or
+    # when an existing row predates the position column (all positions 0).
+    current = [
         r["name"].lower()
         for r in conn.execute(
             "SELECT t.name AS name FROM podcast_tags pt JOIN tags t ON t.id = pt.tag_id "
-            "WHERE pt.podcast_id = ?",
+            "WHERE pt.podcast_id = ? ORDER BY pt.position, t.name COLLATE NOCASE",
             (podcast_id,),
         ).fetchall()
-    }
-    if current == seen:
+    ]
+    if current == [d.lower() for d in desired]:
         return
 
     conn.execute("DELETE FROM podcast_tags WHERE podcast_id = ?", (podcast_id,))
-    for name in desired:
+    for position, name in enumerate(desired):
         conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
         row = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
         conn.execute(
-            "INSERT OR IGNORE INTO podcast_tags (podcast_id, tag_id) VALUES (?, ?)",
-            (podcast_id, row["id"]),
+            "INSERT OR IGNORE INTO podcast_tags (podcast_id, tag_id, position) VALUES (?, ?, ?)",
+            (podcast_id, row["id"], position),
         )
     conn.commit()
 

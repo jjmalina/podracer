@@ -87,6 +87,32 @@ class SummaryRecord(BaseModel):
     created_at: str | None = None
 
 
+class DigestRecord(BaseModel):
+    """A stored digest row. `data` is raw DigestData JSON, parsed by callers —
+    mirroring SummaryRecord, so the DB layer never depends on podracer.digest."""
+    id: int
+    kind: str
+    period_start: str
+    period_end: str
+    data: str
+    episode_count: int
+    model: str
+    backend: str
+    created_at: str | None = None
+
+
+class DigestMemberRow(BaseModel):
+    """One summarized episode that falls in a digest's period window, joined with
+    its show title and the raw PodcastSummary JSON. digest.generate_and_save
+    enriches these with topics and turns each into LLM input."""
+    episode_id: int
+    podcast_id: int
+    podcast_title: str
+    title: str
+    recency: str | None = None  # COALESCE(published_at, created_at)
+    summary_data: str
+
+
 class FeedMetadata(BaseModel):
     title: str
     author: str | None = None
