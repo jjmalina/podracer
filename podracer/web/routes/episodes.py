@@ -11,8 +11,10 @@ from podracer.db import (
     get_podcast,
     get_summary,
     get_transcript,
+    transcript_exists,
 )
 from podracer.models import Chapter, Highlight, PodcastSummary, is_ad_speaker
+from podracer.timestamps import past_transcript_end, split_timed, transcript_end_seconds
 from podracer.web.deps import get_db
 
 
@@ -25,10 +27,6 @@ class ChapterEntry(ChapterBucket):
 
 
 router = APIRouter()
-
-# Sorts after any well-formed HH:MM:SS string, so an item past the last
-# chapter still falls inside the final window.
-_END_SENTINEL = "99:99:99"
 
 
 def _format_duration(seconds: int | None) -> str:
@@ -46,38 +44,54 @@ def _empty_bucket() -> ChapterBucket:
 
 def _nest_under_chapters(
     summary: PodcastSummary,
+    highlights: list[Highlight],
+    transcript_end: int | None,
 ) -> tuple[list[ChapterEntry] | None, ChapterBucket, ChapterBucket]:
-    """Bin highlights into chapter windows.
+    """Bin ``highlights`` (the caller's already-computed effective list) into
+    chapter windows — summarize.chapter_window is the one definition of those
+    windows, shared with enrichment slicing.
 
-    Returns (chapters_nested, pre_chapter, orphan). chapters_nested is
-    None when the summary has no chapters — the caller should fall back
-    to the flat render.
+    ``transcript_end`` comes from the episode's own transcript — the same
+    anchor the write-side checks use. RSS durations are NOT trusted here:
+    feeds are known to publish bare-integer minutes that get stored as
+    seconds. Highlights past the transcript (plus slack) join the orphan
+    bucket alongside unparseable ones (split_timed_highlights owns that
+    convention).
+
+    Returns (chapters_nested, pre_chapter, orphan). chapters_nested is None —
+    the caller falls back to the un-nested render rather than mis-bin — when
+    the summary has no chapters, a chapter timestamp doesn't parse (stored
+    summaries predating validation), or the chapter timeline runs past the
+    transcript's end: the shifted "MM:SS:00" misfire parses and sorts fine,
+    and only the transcript's own extent exposes it.
     """
     chapters = summary.chapters
     if not chapters:
         return None, _empty_bucket(), _empty_bucket()
+    starts = [s for c in chapters if (s := c.seconds) is not None]
+    if len(starts) != len(chapters):
+        return None, _empty_bucket(), _empty_bucket()
+    if past_transcript_end(starts[-1], transcript_end):
+        return None, _empty_bucket(), _empty_bucket()
 
-    highlights = sorted(summary.effective_highlights(), key=lambda h: h.timestamp)
-    first_ts = chapters[0].timestamp
+    timed, orphaned = split_timed(highlights, transcript_end)
     pre_chapter: ChapterBucket = {
-        "highlights": [x for x in highlights if x.timestamp < first_ts],
+        "highlights": [h for s, h in timed if s < starts[0]],
     }
 
+    # Consecutive index windows over the verified-parseable sorted starts —
+    # exactly timestamps.chapter_window's semantics for an all-parseable list
+    # (a test pins the equivalence): a twin sharing its predecessor's start
+    # gets the empty [s, s) window, the later twin the real span.
     nested: list[ChapterEntry] = []
-    placed: set[int] = set()
     for i, ch in enumerate(chapters):
-        start = ch.timestamp
-        end = chapters[i + 1].timestamp if i + 1 < len(chapters) else _END_SENTINEL
-        ch_highlights = [x for x in highlights if start <= x.timestamp < end]
-        placed.update(id(x) for x in ch_highlights)
-        nested.append({"chapter": ch, "highlights": ch_highlights})
+        start = starts[i]
+        end = starts[i + 1] if i + 1 < len(starts) else None
+        nested.append({"chapter": ch, "highlights": [
+            h for s, h in timed if start <= s and (end is None or s < end)
+        ]})
 
-    orphan: ChapterBucket = {
-        "highlights": [
-            x for x in highlights
-            if x.timestamp >= first_ts and id(x) not in placed
-        ],
-    }
+    orphan: ChapterBucket = {"highlights": orphaned}
 
     return nested, pre_chapter, orphan
 
@@ -102,12 +116,17 @@ def episode_detail(request: Request, episode_id: int, db: sqlite3.Connection = D
         try:
             summary = PodcastSummary.model_validate_json(record.data)
             summary.speakers = [s for s in summary.speakers if not is_ad_speaker(s)]
-            highlights = sorted(summary.effective_highlights(), key=lambda h: h.timestamp)
-            chapters_nested, pre_chapter, orphan = _nest_under_chapters(summary)
+            highlights = summary.effective_highlights()
+            # The transcript text is only needed to anchor the nesting guard,
+            # so load it just when there's a summary to nest.
+            transcript = get_transcript(db, episode_id)
+            t_end = transcript_end_seconds(transcript.text) if transcript else None
+            chapters_nested, pre_chapter, orphan = _nest_under_chapters(
+                summary, highlights, t_end)
         except Exception:
             pass
 
-    has_transcript = get_transcript(db, episode_id) is not None
+    has_transcript = transcript_exists(db, episode_id)
     active_job = db.execute(
         "SELECT kind, status FROM jobs WHERE episode_id = ? "
         "AND status IN ('queued', 'running') ORDER BY id LIMIT 1",
