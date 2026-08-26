@@ -24,7 +24,7 @@ from podracer.db import (
     upsert_episode,
     upsert_podcast,
 )
-from podracer.summarize import (
+from podracer.models import (
     Chapter,
     Insight,
     PodcastSummary,
