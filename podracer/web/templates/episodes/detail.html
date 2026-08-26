@@ -96,66 +96,84 @@
   </details>
 </section>
 
-{% if chapters_nested %}
-<section class="chapters">
-  <div class="chapters-header">
-    <h2>Chapters</h2>
-    <button type="button" class="chapters-toggle secondary outline" onclick="toggleAllChapters(this)">Collapse all</button>
+{% macro chapters_header() %}
+<div class="chapters-header">
+  <h2>Chapters</h2>
+  <button type="button" class="chapters-toggle secondary outline" onclick="toggleAllChapters(this)">Collapse all</button>
+</div>
+<script>
+  function toggleAllChapters(btn) {
+    var chapters = document.querySelectorAll('.chapters .chapter');
+    var anyOpen = Array.prototype.some.call(chapters, function(c) { return c.open; });
+    chapters.forEach(function(c) { c.open = !anyOpen; });
+    btn.textContent = anyOpen ? 'Expand all' : 'Collapse all';
+  }
+</script>
+{% endmacro %}
+{% macro chapter_shell(title, ts) %}
+<details open class="chapter">
+  <summary class="chapter-heading">
+    <span class="chapter-title">{{ title }}</span>
+    <span class="chapter-ts">{{ ts }}</span>
+  </summary>
+  <div class="chapter-body">
+    {{ caller() }}
   </div>
-  <script>
-    function toggleAllChapters(btn) {
-      var chapters = document.querySelectorAll('.chapters .chapter');
-      var anyOpen = Array.prototype.some.call(chapters, function(c) { return c.open; });
-      chapters.forEach(function(c) { c.open = !anyOpen; });
-      btn.textContent = anyOpen ? 'Expand all' : 'Collapse all';
-    }
-  </script>
-
+</details>
+{% endmacro %}
+{% macro chapter_writeup(ch) %}
+{% for para in ch.summary.split('\n\n') if para.strip() %}
+<p class="chapter-summary">{{ para }}</p>
+{% endfor %}
+{% endmacro %}
+{% macro highlight_list(items) %}
+{% if items %}
+<h4 class="subsection-label">Highlights</h4>
+{% for h in items %}{{ highlight_item(h) }}{% endfor %}
+{% endif %}
+{% endmacro %}
+{% macro chapters_section() %}
+<section class="chapters">
+  {{ chapters_header() }}
+  {{ caller() }}
+</section>
+{% endmacro %}
+{% macro chapter_entry(ch, items) %}
+{% call chapter_shell(ch.title, ch.timestamp) %}
+  {{ chapter_writeup(ch) }}
+  {{ highlight_list(items) }}
+{% endcall %}
+{% endmacro %}
+{% if chapters_nested %}
+{% call chapters_section() %}
   {% if pre_chapter.highlights %}
-  <details open class="chapter">
-    <summary class="chapter-heading">
-      <span class="chapter-title">Intro</span>
-      <span class="chapter-ts">—</span>
-    </summary>
-    <div class="chapter-body">
-      <h4 class="subsection-label">Highlights</h4>
-      {% for h in pre_chapter.highlights %}{{ highlight_item(h) }}{% endfor %}
-    </div>
-  </details>
+  {% call chapter_shell("Intro", "—") %}
+    {{ highlight_list(pre_chapter.highlights) }}
+  {% endcall %}
   {% endif %}
 
   {% for entry in chapters_nested %}
-  <details open class="chapter">
-    <summary class="chapter-heading">
-      <span class="chapter-title">{{ entry.chapter.title }}</span>
-      <span class="chapter-ts">{{ entry.chapter.timestamp }}</span>
-    </summary>
-    <div class="chapter-body">
-      {% for para in entry.chapter.summary.split('\n\n') if para.strip() %}
-      <p class="chapter-summary">{{ para }}</p>
-      {% endfor %}
-      {% if entry.highlights %}
-      <h4 class="subsection-label">Highlights</h4>
-      {% for h in entry.highlights %}{{ highlight_item(h) }}{% endfor %}
-      {% endif %}
-    </div>
-  </details>
+  {{ chapter_entry(entry.chapter, entry.highlights) }}
   {% endfor %}
 
   {% if orphan.highlights %}
-  <details open class="chapter">
-    <summary class="chapter-heading">
-      <span class="chapter-title">Other</span>
-      <span class="chapter-ts">—</span>
-    </summary>
-    <div class="chapter-body">
-      <h4 class="subsection-label">Highlights</h4>
-      {% for h in orphan.highlights %}{{ highlight_item(h) }}{% endfor %}
-    </div>
-  </details>
+  {% call chapter_shell("Other", "—") %}
+    {{ highlight_list(orphan.highlights) }}
+  {% endcall %}
   {% endif %}
-</section>
+{% endcall %}
 {% else %}
+{# Un-nested fallback: chapter timestamps didn't parse or don't fit the
+   episode (stored summaries predating validation), so highlight windows are
+   untrustworthy — but the chapter writeups themselves are still worth showing. #}
+{% if summary.chapters %}
+{% call chapters_section() %}
+  {% for ch in summary.chapters %}
+  {{ chapter_entry(ch, []) }}
+  {% endfor %}
+{% endcall %}
+{% endif %}
+{% if highlights %}
 <section>
   <h2>Highlights</h2>
   {% for h in highlights %}
@@ -165,6 +183,7 @@
   </article>
   {% endfor %}
 </section>
+{% endif %}
 {% endif %}
 {% else %}
 <p>This episode has not been summarized yet.</p>
