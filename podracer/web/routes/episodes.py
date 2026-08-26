@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from podracer.db import (
-    delete_summary,
     enqueue_episode_pipeline,
     get_episode,
     get_podcast,
@@ -176,6 +175,8 @@ def resummarize_episode(request: Request, episode_id: int, db: sqlite3.Connectio
     if active:
         return RedirectResponse(url=f"/episodes/{episode_id}?flash=already-queued", status_code=303)
 
-    delete_summary(db, episode_id)
-    enqueue_episode_pipeline(db, episode_id, max_attempts=cfg.max_attempts)
+    # The old summary stays in place until the forced job overwrites it on
+    # success — deleting it up front meant a job that failed every attempt
+    # permanently destroyed a perfectly good summary.
+    enqueue_episode_pipeline(db, episode_id, max_attempts=cfg.max_attempts, force_summarize=True)
     return RedirectResponse(url=f"/episodes/{episode_id}?flash=resummarizing", status_code=303)

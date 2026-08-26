@@ -186,8 +186,8 @@ class Worker:
 
     def _dispatch(self, job: Job) -> None:
         if job.kind == "transcribe":
-            transcribe_episode(self.conn, self.cfg, job.episode_id)
+            transcribe_episode(self.conn, self.cfg, job.episode_id, force=job.force)
         elif job.kind == "summarize":
-            summarize_episode(self.conn, self.cfg, job.episode_id)
+            summarize_episode(self.conn, self.cfg, job.episode_id, force=job.force)
         else:
             raise ValueError(f"unknown job kind: {job.kind}")

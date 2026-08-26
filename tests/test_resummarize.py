@@ -1,6 +1,9 @@
-"""delete_summary: powers the per-episode 'Re-summarize' button."""
+"""The re-summarize flow: a forced summarize job regenerates in place (the
+old summary stays readable until overwritten), plus the delete_summary db
+primitive."""
 from podracer.db import (
     delete_summary,
+    enqueue_episode_pipeline,
     get_episode,
     get_summary,
     save_summary,
@@ -56,3 +59,18 @@ def test_delete_summary_does_not_change_non_summarized_status(conn):
     delete_summary(conn, eid)
     ep = get_episode(conn, eid)
     assert ep is not None and ep.status == "pending"
+
+
+def test_resummarize_enqueue_keeps_summary_and_forces_job(conn):
+    # The route no longer deletes the summary before enqueueing — deleting up
+    # front meant a job that failed every attempt permanently destroyed a
+    # healthy summary (and the page was blank while the job ran). The
+    # summarize job carries force=1 instead.
+    eid = _seed_with_summary(conn)
+
+    result = enqueue_episode_pipeline(conn, eid, force_summarize=True)
+
+    assert result is not None
+    assert get_summary(conn, eid) is not None  # still readable until overwritten
+    rows = conn.execute("SELECT kind, force FROM jobs ORDER BY id").fetchall()
+    assert [(r["kind"], r["force"]) for r in rows] == [("transcribe", 0), ("summarize", 1)]
