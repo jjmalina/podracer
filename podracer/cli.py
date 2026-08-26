@@ -5,6 +5,7 @@ import socket
 import sys
 
 import uvicorn
+from pydantic import ValidationError
 
 from podracer import logger
 from podracer.config import Config, load_config
@@ -33,6 +34,7 @@ from podracer.db import (
 from podracer.download import download_episode, ensure_artwork_cached
 from podracer.feed import configure_timeouts, fetch_feed, fetch_feed_metadata
 from podracer.logging_config import configure_logging
+from podracer.models import PodcastSummary
 from podracer.process import (
     apply_feed,
     process_episode,
@@ -43,7 +45,7 @@ from podracer.process import (
 )
 from podracer.search import search_podcasts
 from podracer.sentry_config import configure_sentry
-from podracer.summarize import PodcastSummary
+from podracer.summarize import DegenerateOutputError
 from podracer.summarize_cli import print_summary
 from podracer.transcribe import transcribe
 from podracer.web.app import create_app
@@ -327,6 +329,17 @@ def cmd_transcribe(args):
         print(text)
 
 
+def _parse_stored_summary(data: str, episode_id: int) -> PodcastSummary:
+    """Parse a stored summary blob, exiting cleanly (not a traceback) when it
+    is corrupt or predates the current schema beyond repair."""
+    try:
+        return PodcastSummary.model_validate_json(data)
+    except ValidationError:
+        logger.error("Stored summary for episode %s is corrupt or unreadable; "
+                     "re-run with --force to regenerate it.", episode_id)
+        sys.exit(1)
+
+
 def cmd_summarize(args):
     conn = _db()
     episode = get_episode(conn, args.episode_id)
@@ -336,10 +349,14 @@ def cmd_summarize(args):
 
     existing = get_summary(conn, args.episode_id)
     if existing and not args.force:
+        stored = _parse_stored_summary(existing.data, args.episode_id)
         if args.json:
-            print(existing.data)
+            # Serve the canonical agent-facing view — legacy insights/takes
+            # folded into highlights, ad speakers dropped — the same shape the
+            # JSON API returns, so the two agent-facing readers agree.
+            print(stored.migrated().model_dump_json(indent=2))
         else:
-            print_summary(PodcastSummary.model_validate_json(existing.data))
+            print_summary(stored)
         return
 
     try:
@@ -347,7 +364,7 @@ def cmd_summarize(args):
             conn, _config(), args.episode_id,
             force=args.force, backend=args.backend, model=args.model,
         )
-    except RuntimeError as e:
+    except (RuntimeError, DegenerateOutputError) as e:
         logger.error("%s", e)
         sys.exit(1)
 
@@ -386,7 +403,7 @@ def cmd_process(args):
             conn, _config(), args.episode_id,
             force=args.force, backend=args.backend, model=args.model,
         )
-    except RuntimeError as e:
+    except (RuntimeError, DegenerateOutputError) as e:
         logger.error("%s", e)
         sys.exit(1)
 
@@ -394,7 +411,7 @@ def cmd_process(args):
         # Skipped both stages because artifacts existed and --force wasn't passed.
         existing = get_summary(conn, args.episode_id)
         if existing:
-            result = PodcastSummary.model_validate_json(existing.data)
+            result = _parse_stored_summary(existing.data, args.episode_id)
         else:
             return
 

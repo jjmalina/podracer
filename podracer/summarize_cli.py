@@ -5,7 +5,8 @@ from pathlib import Path
 
 from podracer import logger
 from podracer.logging_config import configure_logging
-from podracer.summarize import Backend, PodcastSummary, summarize
+from podracer.models import PodcastSummary
+from podracer.summarize import Backend, DegenerateOutputError, summarize
 
 
 def print_summary(result: PodcastSummary) -> None:
@@ -68,7 +69,12 @@ def main():
         backend = Backend.ollama(args.model, args.base_url or "http://localhost:11434")
 
     transcript = path.read_bytes().decode("utf-8")
-    result = summarize(transcript, backend=backend)
+    try:
+        result = summarize(transcript, backend=backend)
+    except DegenerateOutputError as e:
+        # Same clean error+exit contract as cli.py's cmd_summarize/cmd_process.
+        logger.error("%s", e)
+        sys.exit(1)
 
     if args.json:
         print(result.model_dump_json(indent=2))
