@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     depends_on_job_id INTEGER REFERENCES jobs(id),
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 3,
+    force INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     started_at TEXT,
@@ -122,6 +123,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     ep_cols = {row[1] for row in conn.execute("PRAGMA table_info(episodes)").fetchall()}
     if "show_notes" not in ep_cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN show_notes TEXT")
+
+    job_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "force" not in job_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN force INTEGER NOT NULL DEFAULT 0")
 
     pc_cols = {row[1] for row in conn.execute("PRAGMA table_info(podcasts)").fetchall()}
     if "subscribed_at" not in pc_cols:

@@ -119,6 +119,7 @@ class Job(BaseModel):
     depends_on_job_id: int | None = None
     attempts: int = 0
     max_attempts: int = 3
+    force: bool = False  # run the step even if its artifact exists (resummarize)
     last_error: str | None = None
     created_at: str | None = None
     started_at: str | None = None

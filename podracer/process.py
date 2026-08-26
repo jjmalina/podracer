@@ -130,6 +130,13 @@ def transcribe_episode(
         diarize=cfg.diarize,
     )
     save_transcript(conn, episode.id, text, f"{backend}:{model}")
+    if get_summary(conn, episode.id):
+        # The stored summary was built from the transcript just replaced, so
+        # its timestamps may no longer line up with the audio (the episode
+        # page then falls back to un-nested chapters). Surface it rather than
+        # silently desyncing.
+        logger.warning("summary_stale_after_retranscribe", episode_id=episode.id,
+                       hint="resummarize to rebuild against the new transcript")
 
 
 def _build_summarize_backend(cfg: Config, backend: str | None, model: str | None) -> Backend:

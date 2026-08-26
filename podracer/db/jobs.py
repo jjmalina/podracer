@@ -76,8 +76,14 @@ def get_worker_heartbeat(conn: sqlite3.Connection) -> str | None:
 
 def enqueue_episode_pipeline(
     conn: sqlite3.Connection, episode_id: int, max_attempts: int = 3,
+    force_summarize: bool = False,
 ) -> tuple[int, int] | None:
     """Insert a transcribe job, then a summarize job depending on it.
+
+    ``force_summarize`` marks the summarize job to regenerate even though a
+    summary already exists (the resummarize flow) — the old summary stays in
+    place until the new one overwrites it on success, so a job that fails
+    every attempt loses nothing.
 
     Returns (transcribe_job_id, summarize_job_id), or None if either kind is
     already active (queued/running) for this episode.
@@ -89,9 +95,9 @@ def enqueue_episode_pipeline(
         )
         transcribe_id = cur.lastrowid
         cur = conn.execute(
-            "INSERT INTO jobs (episode_id, kind, depends_on_job_id, max_attempts) "
-            "VALUES (?, 'summarize', ?, ?)",
-            (episode_id, transcribe_id, max_attempts),
+            "INSERT INTO jobs (episode_id, kind, depends_on_job_id, max_attempts, force) "
+            "VALUES (?, 'summarize', ?, ?, ?)",
+            (episode_id, transcribe_id, max_attempts, int(force_summarize)),
         )
         summarize_id = cur.lastrowid
         conn.commit()
