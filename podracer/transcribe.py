@@ -15,6 +15,7 @@ from tenacity import (
 
 from podracer import logger
 from podracer.logging_config import configure_logging
+from podracer.timestamps import format_timestamp
 
 DEEPGRAM_TIMEOUT_SECONDS = 1800  # 30 min — large podcast uploads can take a while
 WHISPER_SERVICE_TIMEOUT_SECONDS = 3600
@@ -48,13 +49,6 @@ def transcribe(
             audio_path, service_url, service_auth_token, diarize, language,
         )
     raise ValueError(f"unknown transcribe backend: {backend!r}")
-
-
-def _format_timestamp(seconds: float) -> str:
-    total = int(seconds)
-    h, rem = divmod(total, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def _transcribe_deepgram(
@@ -93,7 +87,7 @@ def _transcribe_deepgram(
         text = (u.transcript or "").strip()
         if not text:
             continue
-        lines.append(f"[{_format_timestamp(start)}] [{speaker}] {text}")
+        lines.append(f"[{format_timestamp(start)}] [{speaker}] {text}")
     return "\n".join(lines)
 
 

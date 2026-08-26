@@ -73,6 +73,10 @@ def _fetch_parsed_feed(feed_url: str):
 
 
 def parse_duration(duration_str: str | None) -> int | None:
+    """Lenient parser for RSS <itunes:duration> values (bare seconds, MM:SS,
+    or HH:MM:SS). Only for feed durations — for transcript/chapter/highlight
+    *position* stamps use the strict ``podracer.timestamps.parse_timestamp``,
+    which rejects the ambiguous forms this accepts."""
     if not duration_str:
         return None
     if duration_str.isdigit():
