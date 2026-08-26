@@ -8,9 +8,9 @@ import sys
 import structlog
 
 from podracer import logging_config, summarize
+from podracer.models import Chapter
 from podracer.summarize import (
     Backend,
-    Chapter,
     _chat_ollama,
     _chat_openrouter,
     _chat_vllm,

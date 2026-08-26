@@ -12,7 +12,7 @@ from podracer.db import (
     get_summary,
     get_transcript,
 )
-from podracer.summarize import Chapter, Highlight, PodcastSummary, is_ad_speaker
+from podracer.models import Chapter, Highlight, PodcastSummary, is_ad_speaker
 from podracer.web.deps import get_db
 
 

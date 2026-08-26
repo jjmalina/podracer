@@ -30,12 +30,13 @@ from podracer.db import (
     summary_exists,
     transcript_exists,
 )
-from podracer.models import EpisodeListItem, Transcript
-from podracer.summarize import (
+from podracer.models import (
     Chapter,
+    EpisodeListItem,
     Highlight,
     PodcastSummary,
     SpeakerIdentification,
+    Transcript,
     is_ad_speaker,
 )
 from podracer.web.deps import get_db

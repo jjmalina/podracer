@@ -1,9 +1,9 @@
 import json
-import re
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import cast
 
 import httpx
 import structlog
@@ -11,6 +11,19 @@ from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_exponential
 
 from podracer import logger
+from podracer.models import (
+    Chapter,
+    ChapterList,
+    HighlightList,
+    PodcastSummary,
+    SpeakerIdentification,
+)
+from podracer.timestamps import (
+    chapter_window,
+    past_transcript_end,
+    timestamped_lines,
+    usable_timeline_end,
+)
 
 DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 131072
@@ -28,7 +41,7 @@ _RETRY_BACKOFF = 0.5              # seconds between degenerate-output retries
 _MIN_SUMMARY_CHARS = 200          # an episode summary (3-5 paragraphs) shorter than this is a stub
 _MIN_HIGHLIGHTS = 5              # prompt asks for 15-25; <5 on a full episode is degenerate
 _MIN_HIGHLIGHT_CHARS = 40        # an individual highlight shorter than this is a stub ("On GenAI: ")
-_BAD_HIGHLIGHT_FRACTION = 0.2    # if >20% of items are degenerate, the whole response is suspect
+_BAD_ITEM_FRACTION = 0.2         # if >20% of a list's items are degenerate, the whole response is suspect
 _SUBSTANTIAL_SLICE_CHARS = 3000  # a chapter whose transcript slice is this long should get a real writeup
 _MIN_CHAPTER_DETAIL_CHARS = 400  # ...so a sub-400-char detail for such a chapter is too thin (prompt asks 150-300 words)  # noqa: E501
 _TERMINAL_PUNCT = (".", "!", "?", '"', ")", "”", "’", "…")
@@ -178,94 +191,14 @@ pick the single kind that fits best and list it once. Cover all major \
 speakers. Ignore advertisement and sponsor segments entirely."""
 
 
-class SpeakerIdentification(BaseModel):
-    label: str
-    name: str
-    role: str
-    evidence_timestamp: str
-    evidence_quote: str
-
-
-# Advertiser/sponsor voices the diarizer picks up but that aren't real speakers;
-# suppressed from any display of the speaker list (web UI + JSON API).
-AD_SPEAKER_KEYWORDS = {
-    "advertisement", "ad ", "ad)", "sponsor", "commercial", "promo",
-    "voiceover", "disclosure",
-}
-
-
-def is_ad_speaker(s: SpeakerIdentification) -> bool:
-    """Whether a speaker entry looks like an ad/sponsor read rather than a guest."""
-    role = s.role.lower()
-    name = s.name.lower()
-    return any(kw in role or kw in name for kw in AD_SPEAKER_KEYWORDS)
-
-
 class SpeakerIdentifications(BaseModel):
+    """LLM response wrapper for the speakers pass."""
     speakers: list[SpeakerIdentification]
 
 
 class Summary(BaseModel):
+    """LLM response wrapper for the prose-summary and chapter-detail passes."""
     summary: str
-
-
-class Chapter(BaseModel):
-    title: str
-    timestamp: str
-    summary: str
-
-
-class ChapterList(BaseModel):
-    chapters: list[Chapter]
-
-
-class Highlight(BaseModel):
-    text: str
-    timestamp: str
-    speaker: str
-    kind: str  # "takeaway" or "opinion"
-
-
-class HighlightList(BaseModel):
-    highlights: list[Highlight]
-
-
-# Legacy item models — retained so summaries stored before the insights/takes
-# consolidation still deserialize. New summaries populate `highlights` instead.
-class Insight(BaseModel):
-    text: str
-    timestamp: str
-    speaker: str
-
-
-class SpeakerTake(BaseModel):
-    speaker: str
-    take: str
-    timestamp: str
-
-
-class PodcastSummary(BaseModel):
-    summary: str
-    speakers: list[SpeakerIdentification]
-    chapters: list[Chapter]
-    highlights: list[Highlight] = []
-    # Legacy fields, retained for reading pre-consolidation summaries.
-    insights: list[Insight] = []
-    speaker_takes: list[SpeakerTake] = []
-
-    def effective_highlights(self) -> list[Highlight]:
-        """Highlights to display, migrating legacy insights/takes on read."""
-        if self.highlights:
-            return self.highlights
-        merged = [
-            Highlight(text=i.text, timestamp=i.timestamp, speaker=i.speaker, kind="takeaway")
-            for i in self.insights
-        ]
-        merged += [
-            Highlight(text=t.take, timestamp=t.timestamp, speaker=t.speaker, kind="opinion")
-            for t in self.speaker_takes
-        ]
-        return merged
 
 
 def _extract_json(content: str) -> str:
@@ -314,13 +247,23 @@ def _repair_truncated_json(content: str) -> str:
 class DegenerateOutputError(Exception):
     """An LLM response that is schema-valid but implausible as content: a stub,
     an empty list, or text cut off mid-sentence. Raised by the validators below
-    to trigger a retry of the call."""
+    to trigger a retry of the call.
 
-    def __init__(self, step: str, reason: str, *, output_chars: int | None = None):
+    List-shaped checks attach ``salvaged`` (the filtered model still worth
+    keeping if every retry fails) and ``usable`` (its rank: distinct usable
+    items). Both travel WITH the exception so degraded-accept semantics live
+    in one place — the check — instead of conventions every call site must
+    remember (the round-1..3 bug class: mutate-in-place plus a prefer= the
+    caller forgets, storing the emptiest failed attempt)."""
+
+    def __init__(self, step: str, reason: str, *, output_chars: int | None = None,
+                 salvaged: BaseModel | None = None, usable: int = 0):
         super().__init__(f"{step}: {reason}")
         self.step = step
         self.reason = reason
         self.output_chars = output_chars
+        self.salvaged = salvaged
+        self.usable = usable
 
 
 def _ends_terminally(text: str) -> bool:
@@ -331,40 +274,77 @@ def _ends_terminally(text: str) -> bool:
     return bool(text) and text.endswith(_TERMINAL_PUNCT)
 
 
-def _check_speakers(m: "SpeakerIdentifications") -> None:
+# Checks are PURE: they never mutate their input, and they return the model to
+# use — the same instance for scalar checks, a filtered copy for list checks.
+# On degenerate content they raise, attaching the filtered copy as salvage.
+
+def _check_speakers(m: "SpeakerIdentifications") -> "SpeakerIdentifications":
     if not m.speakers:
         raise DegenerateOutputError("speakers", "no speakers identified")
+    return m
 
 
-def _check_summary(m: "Summary") -> None:
+def _check_summary(m: "Summary") -> "Summary":
     s = m.summary.strip()
     if len(s) < _MIN_SUMMARY_CHARS or not _ends_terminally(s):
         raise DegenerateOutputError("summary", f"stub or mid-sentence cut ({len(s)} chars)", output_chars=len(s))
+    return m
 
 
-def _check_chapters(m: "ChapterList") -> None:
-    if len(m.chapters) < 2:
-        raise DegenerateOutputError("chapters", f"only {len(m.chapters)} chapter(s)")
-    if len({c.timestamp for c in m.chapters}) < 2:
-        raise DegenerateOutputError("chapters", "chapters do not span multiple timestamps")
+def _check_chapters(m: "ChapterList", transcript_end: int | None = None) -> "ChapterList":
+    """Filter out chapters whose timestamp is malformed or past the transcript
+    end, then judge the survivors. Returns the filtered list; raises with it
+    attached as salvage, ranked by DISTINCT usable starts (duplicate twins are
+    kept — dropping one deletes its title and writeup; chapter_window gives
+    the later twin the real span — but must not inflate the rank)."""
+    total = len(m.chapters)
+    good: list[Chapter] = []
+    bad = 0
+    seen: set[int] = set()
+    for c in m.chapters:
+        secs = c.seconds
+        if secs is None or past_transcript_end(secs, transcript_end):
+            bad += 1
+            continue
+        if secs in seen:
+            # NB: not "timestamp=" — logging_config's _add_timestamp processor
+            # overwrites that key with wall-clock time.
+            logger.warning("duplicate_chapter_start", title=c.title, chapter_timestamp=c.timestamp)
+        seen.add(secs)
+        good.append(c)
+    filtered = ChapterList(chapters=good)
+    if len(seen) < 2:
+        raise DegenerateOutputError(
+            "chapters", f"only {len(seen)} distinct usable start(s) across {total} chapter(s)",
+            salvaged=filtered, usable=len(seen))
+    if bad > _BAD_ITEM_FRACTION * total:
+        raise DegenerateOutputError(
+            "chapters", f"{bad} of {total} chapters degenerate",
+            salvaged=filtered, usable=len(seen))
+    return filtered
 
 
-def _check_highlights(m: "HighlightList") -> None:
-    """Drop stub items, then judge the surviving list. Mutates ``m.highlights``
-    so an accepted response keeps only the good items (per the plan: drop bad
-    items unless too many fail, in which case retry the whole call)."""
-    good = [h for h in m.highlights
-            if len(h.text.strip()) >= _MIN_HIGHLIGHT_CHARS and _ends_terminally(h.text)]
+def _check_highlights(m: "HighlightList", transcript_end: int | None = None) -> "HighlightList":
+    """Filter out stub items and items with malformed or past-the-end
+    timestamps, then judge the survivors. Returns the filtered list; raises
+    with it attached as salvage, ranked by usable count."""
+    good = [
+        h for h in m.highlights
+        if len(h.text.strip()) >= _MIN_HIGHLIGHT_CHARS and _ends_terminally(h.text)
+        and h.seconds is not None and not past_transcript_end(h.seconds, transcript_end)
+    ]
     total = len(m.highlights)
     dropped = total - len(good)
-    m.highlights = good
+    filtered = HighlightList(highlights=good)
     if len(good) < _MIN_HIGHLIGHTS:
         raise DegenerateOutputError(
             "highlights", f"only {len(good)} usable highlights (dropped {dropped} of {total})",
-            output_chars=len(good))
-    if total and dropped > _BAD_HIGHLIGHT_FRACTION * total:
+            output_chars=len(good), salvaged=filtered, usable=len(good))
+    if total and dropped > _BAD_ITEM_FRACTION * total:
         raise DegenerateOutputError(
-            "highlights", f"{dropped} of {total} highlights degenerate", output_chars=len(good))
+            "highlights", f"{dropped} of {total} highlights degenerate",
+            output_chars=len(good), salvaged=filtered, usable=len(good))
+    return filtered
 
 
 class TokenUsage(BaseModel):
@@ -589,20 +569,21 @@ def _chat(backend: Backend, system: str, user: str, schema: dict,
 
 
 def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_cls: type[M],
-                                check: Callable[[M], None], *,
+                                check: Callable[[M], M], *,
                                 prefer: Callable[[M], int] | None = None) -> tuple[M | None, bool]:
     """Call the LLM, validate schema *and* content, retrying on degeneracy.
 
-    Returns ``(model, passed)``. ``model`` is the first response that passes
-    both schema (Pydantic) and content (``check``) validation. If none do, it is
-    the "best" failed response — chosen by ``prefer(model)`` (a sort key, e.g.
-    summary length), defaulting to the last — or ``None`` if nothing ever
-    parsed. ``check(model)`` raises :class:`DegenerateOutputError` on implausible
-    content and may filter the model in place (highlights). ``finish_reason ==
-    "length"`` alone is *not* a retry trigger: a complete, plausible answer that
-    merely hit the token cap passes the content check, and a truncated one fails
-    it (mid-sentence). JSON repair is attempted only on the final attempt, so it
-    no longer masks truncation on the first response.
+    Returns ``(model, passed)``. On success ``model`` is what ``check``
+    returned (checks are pure: same instance for scalar checks, a filtered
+    copy for list checks). If every attempt fails, ``model`` is the best
+    failed candidate: the exception's ``salvaged`` model ranked by its
+    ``usable`` count when the check provides one, else the raw parsed model
+    ranked by ``prefer`` (defaulting to the last attempt) — or ``None`` if
+    nothing ever parsed. ``finish_reason == "length"`` alone is *not* a retry
+    trigger: a complete, plausible answer that merely hit the token cap passes
+    the content check, and a truncated one fails it (mid-sentence). JSON
+    repair is attempted only on the final attempt, so it no longer masks
+    truncation on the first response.
     """
     schema = model_cls.model_json_schema()
     best: M | None = None
@@ -616,6 +597,8 @@ def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_
         result = _chat(backend, system, user, schema, repair=is_last,
                        ignore_providers=ignore_providers or None)
         model: M | None = None
+        candidate: M | None = None
+        key = attempt
         reason: str | None = None
         try:
             model = model_cls.model_validate_json(result.content)
@@ -623,11 +606,15 @@ def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_
             reason = "invalid_json"  # prose-instead-of-JSON, or unrepairable truncation
         if model is not None:
             try:
-                check(model)
+                return check(model), True
             except DegenerateOutputError as de:
                 reason = de.reason
-        if model is not None and reason is None:
-            return model, True
+                if de.salvaged is not None:
+                    candidate = cast(M, de.salvaged)
+                    key = de.usable
+                else:
+                    candidate = model
+                    key = prefer(model) if prefer else attempt
         # One warning per failed attempt. episode_id is attached automatically
         # via the contextvar bound in summarize_episode / the worker.
         logger.warning("llm_degenerate_output", attempt=attempt + 1,
@@ -637,21 +624,21 @@ def _chat_checked[M: BaseModel](backend: Backend, system: str, user: str, model_
                        input_tokens=result.input_tokens, output_tokens=result.output_tokens)
         if result.provider and result.provider not in ignore_providers:
             ignore_providers.append(result.provider)
-        if model is not None:
-            key = prefer(model) if prefer else attempt
-            if best_key is None or key > best_key:
-                best, best_key = model, key
+        if candidate is not None and (best_key is None or key > best_key):
+            best, best_key = candidate, key
         if not is_last:
             time.sleep(_RETRY_BACKOFF)
     return best, False
 
 
 def _checked_or_fail[M: BaseModel](model_cls: type[M], backend: Backend, system: str, user: str,
-                                   check: Callable[[M], None]) -> M:
+                                   check: Callable[[M], M]) -> M:
     """:func:`_chat_checked` for an episode-level step. Accepts a best-effort
     response when retries are exhausted (better a degraded episode than a failed
     job), but raises — failing the job so the worker retries it — if nothing
-    ever parsed, rather than storing a structurally broken episode."""
+    ever parsed, rather than storing a structurally broken episode. Which
+    failed attempt survives is the check's business (salvage + usable rank),
+    not the caller's."""
     model, passed = _chat_checked(backend, system, user, model_cls, check)
     if model is None:
         step = structlog.contextvars.get_contextvars().get("step", model_cls.__name__)
@@ -706,7 +693,7 @@ def rewrite_transcript(transcript: str, speakers: list[SpeakerIdentification]) -
     return result
 
 
-def _step(label: str, func, *args):
+def _step(label: str, func, *args, **kwargs):
     # Bind `step` as a contextvar so every event emitted underneath (llm_call,
     # llm_degenerate_output, ...) is tagged with which pass produced it —
     # including the chapter-detail ThreadPoolExecutor, which captures these
@@ -714,26 +701,23 @@ def _step(label: str, func, *args):
     with structlog.contextvars.bound_contextvars(step=label):
         logger.info("[%s] starting...", label)
         start = time.time()
-        result = func(*args)
+        result = func(*args, **kwargs)
         elapsed = time.time() - start
         logger.info("[%s] done (%.1fs)", label, elapsed)
         return result
 
 
-_TS_RE = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]")
-
-
-def _slice_transcript_by_chapter(named_transcript: str, start_ts: str, end_ts: str) -> str:
-    """Return transcript lines whose [HH:MM:SS] timestamp falls in [start_ts, end_ts)."""
-    kept: list[str] = []
-    for line in named_transcript.splitlines():
-        m = _TS_RE.match(line)
-        if not m:
-            continue
-        ts = m.group(1)
-        if start_ts <= ts < end_ts:
-            kept.append(line)
-    return "\n".join(kept)
+def _slice_transcript_by_chapter(named_transcript: str, start: int | None, end: int | None) -> str:
+    """Return transcript lines whose [HH:MM:SS] timestamp falls in [start, end)
+    seconds. ``end`` None means to the end of the transcript; a ``start`` of
+    None (a malformed chapter stamp, per chapter_window's contract) has no
+    trustworthy window and yields an empty slice."""
+    if start is None:
+        return ""
+    return "\n".join(
+        line for secs, line in timestamped_lines(named_transcript)
+        if secs >= start and (end is None or secs < end)
+    )
 
 
 def _is_teaser_chapter(chapter: "Chapter") -> bool:
@@ -751,13 +735,14 @@ def _enrich_one_chapter(backend: Backend, speaker_key: str, chapter: "Chapter", 
         f"TRANSCRIPT SEGMENT FOR THIS CHAPTER:\n{slice_text}"
     )
 
-    def check(m: "Summary") -> None:
+    def check(m: "Summary") -> "Summary":
         s = m.summary.strip()
         if not _ends_terminally(s):
             raise DegenerateOutputError("chapter_detail", "stub or mid-sentence cut", output_chars=len(s))
         if len(slice_text) > _SUBSTANTIAL_SLICE_CHARS and len(s) < _MIN_CHAPTER_DETAIL_CHARS:
             raise DegenerateOutputError(
                 "chapter_detail", f"thin ({len(s)} chars) for a substantial chapter", output_chars=len(s))
+        return m
 
     model, passed = _chat_checked(backend, CHAPTER_DETAIL_PROMPT, user, Summary, check,
                                   prefer=lambda m: len(m.summary))
@@ -783,7 +768,6 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
     if not chapters:
         return chapters
     speaker_key = format_speaker_key(speakers)
-    sentinel = "99:99:99"
     # contextvars bound on the calling thread (e.g. the worker's episode_id /
     # job_id) don't propagate into ThreadPoolExecutor threads, so capture them
     # and re-bind inside each task — otherwise the per-chapter llm_call events
@@ -794,8 +778,7 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
         with structlog.contextvars.bound_contextvars(**log_context):
             if _is_teaser_chapter(chapters[i]):
                 return i, chapters[i].summary
-            start = chapters[i].timestamp
-            end = chapters[i + 1].timestamp if i + 1 < len(chapters) else sentinel
+            start, end = chapter_window(chapters, i)
             slice_text = _slice_transcript_by_chapter(named_transcript, start, end)
             if not slice_text:
                 return i, chapters[i].summary
@@ -834,11 +817,23 @@ def summarize(transcript: str, backend: Backend | None = None,
         _check_summary,
     ).summary
 
+    transcript_end = usable_timeline_end(named_transcript)
+    if transcript_end is None:
+        # No usable timeline (the Deepgram no-utterances fallback, an
+        # alignment failure stamping everything at/near zero, or sub-minute
+        # audio with nothing to chapter): chapters and highlights would be
+        # timeline fiction, so store the prose summary and speakers alone.
+        # Never fail the job over this — re-transcribing reproduces the same
+        # transcript, so a failure here wedges the episode forever.
+        logger.warning("degenerate_transcript_timeline",
+                       transcript_chars=len(named_transcript))
+        return PodcastSummary(summary=summary, speakers=speakers, chapters=[], highlights=[])
+
     chapters = _step(
         "chapters", _checked_or_fail,
         ChapterList, backend, CHAPTERS_PROMPT,
         f"Generate chapters for this transcript:\n\n{notes_prefix}{named_transcript}",
-        _check_chapters,
+        lambda m: _check_chapters(m, transcript_end),
     ).chapters
 
     chapters = _step("chapter_detail", enrich_chapters, chapters, named_transcript, speakers, backend)
@@ -847,8 +842,20 @@ def summarize(transcript: str, backend: Backend | None = None,
         "highlights", _checked_or_fail,
         HighlightList, backend, HIGHLIGHTS_PROMPT,
         f"Extract highlights from this transcript:\n\n{notes_prefix}{named_transcript}",
-        _check_highlights,
+        lambda m: _check_highlights(m, transcript_end),
     ).highlights
+
+    # A PASSING chapters check always yields >= 2 chapters, so < 2 here means
+    # the pass failed on every attempt and salvage kept at most a fragment —
+    # e.g. only the 00:00:00 opener survives the "MM:SS:00" stamp-shift
+    # misfire's filtering. With no highlights either, storing would be a
+    # near-empty episode page; fail the job so the worker retries. This is a
+    # stochastic LLM failure — deterministic timeline problems were already
+    # routed to the prose-only return above.
+    if len(chapters) < 2 and not highlights:
+        raise DegenerateOutputError(
+            "summarize",
+            f"only {len(chapters)} usable chapter(s) and no highlights after retries")
 
     return PodcastSummary(
         summary=summary,

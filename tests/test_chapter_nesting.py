@@ -1,5 +1,5 @@
 """Unit tests for the chapter-nesting helper used by the episode page."""
-from podracer.summarize import Chapter, Highlight, Insight, PodcastSummary, SpeakerTake
+from podracer.models import Chapter, Highlight, Insight, PodcastSummary, SpeakerTake
 from podracer.web.routes.episodes import _nest_under_chapters
 
 
