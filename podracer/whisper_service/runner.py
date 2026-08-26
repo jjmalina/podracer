@@ -19,13 +19,7 @@ import whisperx  # noqa: E402
 from whisperx.diarize import DiarizationPipeline  # noqa: E402
 
 from podracer import logger  # noqa: E402
-
-
-def _format_timestamp(seconds: float) -> str:
-    total = int(seconds)
-    h, rem = divmod(total, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
+from podracer.timestamps import format_timestamp  # noqa: E402
 
 
 def load_whisper_model(model_size: str, device: str, compute_type: str):
@@ -83,6 +77,6 @@ def transcribe_audio(
         speaker = segment.get("speaker", "SPEAKER")
         start = segment["start"]
         text = segment["text"]
-        lines.append(f"[{_format_timestamp(start)}] [{speaker}] {text}")
+        lines.append(f"[{format_timestamp(start)}] [{speaker}] {text}")
 
     return "\n".join(lines), detected_language
