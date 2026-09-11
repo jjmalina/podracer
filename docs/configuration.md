@@ -59,6 +59,7 @@ diarize = true
 backend = "openrouter"             # ollama, vllm, openrouter
 model = "deepseek/deepseek-v4-flash"
 # base_url = "http://localhost:11434"
+# openrouter_providers = ["deepinfra", "digitalocean"]   # see "OpenRouter provider allowlist"
 
 # Server-side config for `python -m podracer.whisper_service`
 # [whisper_service]
@@ -75,6 +76,30 @@ model = "deepseek/deepseek-v4-flash"
 ```
 
 See [whisper-service.md](whisper-service.md) for running the local whisper backend.
+
+### OpenRouter provider allowlist
+
+OpenRouter routes an open-weight model like `deepseek/deepseek-v4-flash` to
+whichever hosting provider is cheapest and available, and that pool includes
+China-based hosts (Alibaba, Baidu, SiliconFlow, StreamLake, ...). Transcripts
+are sent to whichever provider wins. To pin routing to a fixed set of
+providers, list their slugs:
+
+```toml
+[summarize]
+openrouter_providers = ["deepinfra", "digitalocean", "parasail", "venice", "gmicloud", "azure"]
+```
+
+Slugs come from `https://openrouter.ai/api/v1/providers`; the providers
+currently serving a model are at
+`https://openrouter.ai/api/v1/models/<model>/endpoints`. With the list set,
+the request carries `provider.only`, so OpenRouter never falls back outside
+it (it returns 404 if none are available), and podracer additionally rejects
+any completion whose response names a provider outside the list. An empty
+list is a config error rather than "any provider": omit the key to lift the
+restriction. The list is per-model in practice: switching models means re-checking which allowlisted
+providers serve it. The one-off `python -m podracer.summarize_cli` accepts the
+same list as `--providers deepinfra,digitalocean`.
 
 ## Credentials
 

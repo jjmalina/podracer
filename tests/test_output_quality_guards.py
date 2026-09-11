@@ -16,6 +16,7 @@ import structlog
 
 from podracer import logging_config, summarize
 from podracer.models import Chapter, ChapterList, Highlight, HighlightList
+from podracer.providers import provider_allowed
 from podracer.summarize import (
     Backend,
     DegenerateOutputError,
@@ -593,3 +594,108 @@ def test_degenerate_event_carries_provider_model_tokens_episode(monkeypatch):
     assert ev["input_tokens"] == 29390 and ev["output_tokens"] == 8
     assert ev["reason"] == "invalid_json"
     assert ev["episode_id"] == 5588  # auto-attached via the bound contextvar
+
+
+def test_openrouter_allowlist_sets_only_and_keeps_ignore(monkeypatch):
+    # An allowlisted backend sends provider.only alongside the denylist; the
+    # response's provider (display name) is accepted when it matches a slug.
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                          "usage": {}, "provider": "DeepInfra"})
+
+    monkeypatch.setattr(summarize.httpx, "post", fake_post)
+    backend = Backend.openrouter("m", api_key="x", providers=["deepinfra", "digitalocean"])
+    result = summarize._chat_openrouter(backend, "s", "u", {"type": "object"},
+                                        ignore_providers=["Wafer"])
+    assert result.provider == "DeepInfra"
+    assert captured["payload"]["provider"] == {"require_parameters": True,
+                                               "only": ["deepinfra", "digitalocean"],
+                                               "ignore": ["Baidu", "Wafer"]}
+
+
+@pytest.mark.parametrize("provider", ["Alibaba", "SiliconFlow", None])
+def test_openrouter_rejects_response_from_provider_outside_allowlist(monkeypatch, provider):
+    # Fail closed: output attributed to a provider outside the allowlist (or to
+    # no provider at all) is never used, even if OpenRouter returned 200.
+    def fake_post(url, json=None, headers=None, timeout=None):
+        return _FakeResp({"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                          "usage": {}, "provider": provider})
+
+    monkeypatch.setattr(summarize.httpx, "post", fake_post)
+    backend = Backend.openrouter("m", api_key="x", providers=["deepinfra"])
+    with pytest.raises(summarize.ProviderNotAllowedError):
+        summarize._chat_openrouter(backend, "s", "u", {"type": "object"})
+
+
+@pytest.mark.parametrize("name,allowed,ok", [
+    ("DeepInfra", ["deepinfra"], True),
+    ("Atlas Cloud", ["atlas-cloud"], True),
+    ("AtlasCloud", ["atlas-cloud"], True),
+    ("Mancer 2", ["mancer"], True),            # separated qualifier
+    ("Mancer (private)", ["mancer"], True),
+    ("Azure", ["azure"], True),
+    ("Alibaba", ["deepinfra", "azure"], False),
+    ("DeepSeek", ["deepinfra"], False),        # shared prefix is not a match
+    ("DeepInfraX", ["deepinfra"], False),      # bare prefix is not a match
+    ("DeepInfra", ["deep"], False),
+])
+def test_provider_allowed_matches_display_names_to_slugs(name, allowed, ok):
+    assert provider_allowed(name, allowed) is ok
+
+
+def test_no_allowlist_leaves_routing_unconstrained(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                          "usage": {}, "provider": "Alibaba"})
+
+    monkeypatch.setattr(summarize.httpx, "post", fake_post)
+    summarize._chat_openrouter(BACKEND, "s", "u", {"type": "object"})
+    assert "only" not in captured["payload"]["provider"]
+
+
+def test_retry_exclusions_cannot_empty_the_allowlist(monkeypatch):
+    # With only=["deepinfra"], a degenerate first roll on DeepInfra would put
+    # "DeepInfra" in ignore and leave OpenRouter nothing to route to (404, job
+    # fails, salvaged candidate lost). The retry-level ignore is dropped
+    # instead so the call re-rolls on the same provider.
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                          "usage": {}, "provider": "DeepInfra"})
+
+    monkeypatch.setattr(summarize.httpx, "post", fake_post)
+    backend = Backend.openrouter("m", api_key="x", providers=["deepinfra"])
+    summarize._chat_openrouter(backend, "s", "u", {"type": "object"},
+                               ignore_providers=["DeepInfra"])
+    assert captured["payload"]["provider"] == {"require_parameters": True,
+                                               "only": ["deepinfra"], "ignore": ["Baidu"]}
+
+    # ...but an ignore that still leaves an allowed provider is kept.
+    backend = Backend.openrouter("m", api_key="x", providers=["deepinfra", "venice"])
+    summarize._chat_openrouter(backend, "s", "u", {"type": "object"},
+                               ignore_providers=["DeepInfra"])
+    assert captured["payload"]["provider"]["ignore"] == ["Baidu", "DeepInfra"]
+
+
+def test_chapter_enrichment_does_not_swallow_allowlist_violation(monkeypatch):
+    # Transport errors degrade one chapter; a provider outside the allowlist
+    # is a policy violation and must fail the whole episode.
+    def bad(*a, **k):
+        raise summarize.ProviderNotAllowedError("routed to Alibaba")
+
+    monkeypatch.setattr(summarize, "_enrich_one_chapter", bad)
+    monkeypatch.setattr(summarize, "_is_teaser_chapter", lambda c: False)
+    monkeypatch.setattr(summarize, "_slice_transcript_by_chapter", lambda *a: "segment text")
+    monkeypatch.setattr(summarize, "format_speaker_key", lambda speakers: "")
+    chapters = [Chapter(title="t", timestamp="00:00:00", summary="s")]
+    with pytest.raises(summarize.ProviderNotAllowedError):
+        summarize.enrich_chapters(chapters, "transcript", [],
+                                  backend=Backend.openrouter("m", api_key="x", providers=["deepinfra"]))

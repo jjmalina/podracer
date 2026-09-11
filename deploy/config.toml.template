@@ -17,6 +17,12 @@ diarize = true
 [summarize]
 backend = "openrouter"
 model = "deepseek/deepseek-v4-flash"
+# Optional OpenRouter provider allowlist (provider slugs from
+# https://openrouter.ai/api/v1/providers). Requests route only to these
+# providers; a response attributed to any other provider is rejected. Unset =
+# OpenRouter's default routing, which for open-weight models includes
+# China-based hosts. US-based hosts of deepseek-v4-flash as of 2026-09:
+# openrouter_providers = ["deepinfra", "digitalocean", "parasail", "venice", "gmicloud", "azure"]
 
 [daemon]
 sync_interval_minutes = 30       # how often to fetch RSS + enqueue new episodes
