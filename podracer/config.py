@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from podracer import logger
+from podracer.providers import validate_allowlist
 
 CONFIG_FILENAME = "config.toml"
 CREDENTIALS_DIR = ".credentials"
@@ -43,6 +44,10 @@ class Config:
     summarize_backend: str = "openrouter"
     summarize_model: str = "deepseek/deepseek-v4-flash"
     summarize_base_url: str | None = None
+    # OpenRouter provider allowlist (provider slugs, e.g. "deepinfra"). When set,
+    # requests are routed only to these providers and a response attributed to
+    # any other provider is rejected. None = OpenRouter's default routing.
+    summarize_openrouter_providers: list[str] | None = None
 
     # Daemon / worker
     sync_interval_minutes: int = 30      # how often to fetch feeds + enqueue
@@ -162,6 +167,11 @@ def load_config() -> Config:
         config.summarize_backend = summarize.get("backend", config.summarize_backend)
         config.summarize_model = summarize.get("model", config.summarize_model)
         config.summarize_base_url = summarize.get("base_url", config.summarize_base_url)
+        # Validated at load so a bad allowlist fails at startup, not on the
+        # first summarize job; Backend.openrouter re-validates for other callers.
+        config.summarize_openrouter_providers = validate_allowlist(
+            summarize.get("openrouter_providers"), where="[summarize] openrouter_providers",
+        )
 
         daemon = data.get("daemon", {})
         config.sync_interval_minutes = daemon.get("sync_interval_minutes", config.sync_interval_minutes)

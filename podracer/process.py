@@ -148,7 +148,12 @@ def _build_summarize_backend(cfg: Config, backend: str | None, model: str | None
         api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.openrouter_api_key
         if not api_key:
             raise RuntimeError("openrouter backend requires OPENROUTER_API_KEY")
-        return Backend.openrouter(model_name, api_key)
+        # Say out loud whether routing is restricted: a config typo that drops
+        # the allowlist must not silently widen where transcripts go.
+        logger.info("openrouter_provider_allowlist", model=model_name,
+                    providers=cfg.summarize_openrouter_providers or "any")
+        return Backend.openrouter(model_name, api_key,
+                                  providers=cfg.summarize_openrouter_providers)
     if backend_name == "vllm":
         return Backend.vllm(model_name, base_url or "http://localhost:8000")
     return Backend.ollama(model_name, base_url or "http://localhost:11434")

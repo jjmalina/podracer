@@ -18,6 +18,12 @@ from podracer.models import (
     PodcastSummary,
     SpeakerIdentification,
 )
+from podracer.providers import (
+    DENYLISTED_PROVIDERS,
+    ProviderNotAllowedError,
+    provider_allowed,
+    validate_allowlist,
+)
 from podracer.timestamps import (
     chapter_window,
     past_transcript_end,
@@ -53,6 +59,8 @@ class Backend:
     base_url: str
     model: str
     api_key: str | None = None
+    # openrouter only: provider slugs the request may be routed to (None = any).
+    providers: list[str] | None = None
 
     @staticmethod
     def ollama(model: str, base_url: str = "http://localhost:11434") -> "Backend":
@@ -63,12 +71,14 @@ class Backend:
         return Backend(name="vllm", base_url=base_url, model=model)
 
     @staticmethod
-    def openrouter(model: str, api_key: str) -> "Backend":
+    def openrouter(model: str, api_key: str,
+                   providers: list[str] | None = None) -> "Backend":
         return Backend(
             name="openrouter",
             base_url="https://openrouter.ai/api",
             model=model,
             api_key=api_key,
+            providers=validate_allowlist(providers, where="providers"),
         )
 
 
@@ -485,26 +495,35 @@ def _chat_vllm(backend: Backend, system: str, user: str, schema: dict,
                       input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
 
 
-# Providers that advertise response_format.json_schema support (so they pass
-# require_parameters) but return prose anyway — never route to them. Baidu was
-# observed returning prose (invalid_json) on every retry for multiple calls,
-# discarding their output. Add a provider here once it proves it can't be
-# trusted with structured output.
-_DENYLISTED_PROVIDERS = ["Baidu"]
-
-
 def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
                      repair: bool = False,
                      ignore_providers: list[str] | None = None) -> ChatResult:
     # Only route to providers that honor response_format.json_schema. This kills
     # most prose-instead-of-JSON responses at the source — they came from
     # providers that silently ignored the structured-output request. On top of
-    # that we always exclude _DENYLISTED_PROVIDERS (known structured-output
+    # that we always exclude DENYLISTED_PROVIDERS (known structured-output
     # liars), plus any `ignore_providers` the retry loop blacklists after a
     # provider produces degenerate output mid-call.
-    ignored = list(_DENYLISTED_PROVIDERS)
-    ignored += [p for p in (ignore_providers or []) if p not in ignored]
+    retry_ignores = list(ignore_providers or [])
+    if backend.providers:
+        # With an allowlist, the retry loop's exclusions (response display
+        # names) must not empty it — `only` minus `ignore` == nothing makes
+        # OpenRouter 404 and the job fails outright, discarding the salvaged
+        # candidate the guards would otherwise degrade to. Degenerate output
+        # is transient, so re-rolling on the same provider beats failing.
+        remaining = [a for a in backend.providers
+                     if not any(provider_allowed(ig, [a]) for ig in retry_ignores)]
+        if not remaining:
+            logger.warning("llm_allowlist_exhausted", allowed=backend.providers,
+                           dropped_ignores=retry_ignores)
+            retry_ignores = []
+    ignored = list(DENYLISTED_PROVIDERS)
+    ignored += [p for p in retry_ignores if p not in ignored]
     provider: dict = {"require_parameters": True}
+    if backend.providers:
+        # Hard allowlist (e.g. US-only providers). OpenRouter fails the request
+        # with a 404 rather than falling back outside this list.
+        provider["only"] = list(backend.providers)
     if ignored:
         provider["ignore"] = ignored
     payload = {
@@ -549,6 +568,16 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
     provider = data.get("provider")
     _log_llm_usage("openrouter", backend.model, usage, finish_reason=finish_reason,
                    native_finish_reason=native_finish_reason, provider=provider)
+    if backend.providers and not (provider and provider_allowed(provider, backend.providers)):
+        # Belt and braces: the request asked OpenRouter to route only within
+        # the allowlist; refuse to use output that it attributes elsewhere
+        # (or to nobody). Propagates through every step (chapter enrichment
+        # re-raises it) so the job fails rather than storing the summary.
+        logger.error("llm_provider_not_allowed", provider=provider,
+                     allowed=backend.providers, model=backend.model)
+        raise ProviderNotAllowedError(
+            f"OpenRouter routed to provider {provider!r}, not in allowlist {backend.providers}",
+        )
     content = _extract_json(choice["message"]["content"])
     if repair:
         content = _repair_truncated_json(content)
@@ -784,6 +813,10 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
                 return i, chapters[i].summary
             try:
                 return i, _enrich_one_chapter(backend, speaker_key, chapters[i], slice_text)
+            except ProviderNotAllowedError:
+                # OpenRouter routed outside the allowlist: that is a policy
+                # violation, not a flaky chapter — fail the episode loudly.
+                raise
             except Exception as e:
                 # Degenerate output is handled inside _enrich_one_chapter; this
                 # catches transport/unexpected errors so one chapter can't sink

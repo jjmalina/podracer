@@ -3,10 +3,12 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
+
 from podracer import logger
 from podracer.logging_config import configure_logging
 from podracer.models import PodcastSummary
-from podracer.summarize import Backend, DegenerateOutputError, summarize
+from podracer.summarize import Backend, DegenerateOutputError, ProviderNotAllowedError, summarize
 
 
 def print_summary(result: PodcastSummary) -> None:
@@ -48,6 +50,10 @@ def main():
         "--backend", choices=["ollama", "vllm", "openrouter"], default="ollama", help="Inference backend",
     )
     parser.add_argument("--base-url", default=None, help="Backend API base URL (default: auto per backend)")
+    parser.add_argument(
+        "--providers", default=None,
+        help="openrouter only: comma-separated provider slugs to allow (e.g. deepinfra,digitalocean)",
+    )
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of formatted text")
 
     args = parser.parse_args()
@@ -62,7 +68,14 @@ def main():
         if not api_key:
             logger.error("OPENROUTER_API_KEY environment variable is required")
             sys.exit(1)
-        backend = Backend.openrouter(args.model, api_key)
+        providers = None
+        if args.providers is not None:
+            providers = [p.strip() for p in args.providers.split(",") if p.strip()]
+        try:
+            backend = Backend.openrouter(args.model, api_key, providers=providers)
+        except ValueError as e:  # empty / all-denylisted --providers
+            logger.error("--providers: %s", e)
+            sys.exit(1)
     elif args.backend == "vllm":
         backend = Backend.vllm(args.model, args.base_url or "http://localhost:8000")
     else:
@@ -71,7 +84,7 @@ def main():
     transcript = path.read_bytes().decode("utf-8")
     try:
         result = summarize(transcript, backend=backend)
-    except DegenerateOutputError as e:
+    except (DegenerateOutputError, ProviderNotAllowedError, httpx.HTTPStatusError) as e:
         # Same clean error+exit contract as cli.py's cmd_summarize/cmd_process.
         logger.error("%s", e)
         sys.exit(1)
