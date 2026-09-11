@@ -12,11 +12,13 @@ import structlog
 from podracer import logger
 from podracer.config import Config
 from podracer.db import (
+    NEEDS_PIPELINE_PREDICATE,
     enqueue_episode_pipeline,
     get_episode,
     get_podcast,
     get_summary,
     get_transcript,
+    needs_pipeline_params,
     save_summary,
     save_transcript,
     set_podcast_tags,
@@ -199,27 +201,24 @@ def summarize_episode(
 def queue_latest_unprocessed_episode(
     conn: sqlite3.Connection, cfg: Config, podcast_id: int,
 ) -> int | None:
-    """Find the most recently published episode for a podcast that doesn't
-    already have a summary or an active job, and enqueue transcribe+summarize
-    jobs for it. Returns the episode_id queued, or None if everything is
-    already processed / in flight.
+    """Find the most recently published episode for a podcast that still
+    needs the pipeline (NEEDS_PIPELINE_PREDICATE: no summary, no in-flight job,
+    auto-retry budget not spent, not within the failure cooldown — both from
+    cfg) and enqueue transcribe+summarize jobs for it. Returns the episode_id
+    queued, or None if everything is already processed, in flight, or given
+    up on.
 
     Used on subscribe to give the user something to listen to immediately.
     """
     row = conn.execute(
-        """SELECT e.id FROM episodes e
+        f"""SELECT e.id FROM episodes e
            WHERE e.podcast_id = ?
-             AND NOT EXISTS (
-                 SELECT 1 FROM summaries s WHERE s.episode_id = e.id
-             )
-             AND NOT EXISTS (
-                 SELECT 1 FROM jobs j
-                 WHERE j.episode_id = e.id
-                   AND j.status IN ('queued', 'running')
-             )
+             AND {NEEDS_PIPELINE_PREDICATE}
            ORDER BY e.published_at DESC NULLS LAST, e.id DESC
            LIMIT 1""",
-        (podcast_id,),
+        (podcast_id, *needs_pipeline_params(
+            cfg.auto_retry_pipelines, cfg.auto_retry_cooldown_hours,
+        )),
     ).fetchone()
     if not row:
         return None

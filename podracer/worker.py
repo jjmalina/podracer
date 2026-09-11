@@ -135,8 +135,16 @@ class Worker:
 
     def _enqueue_new(self) -> None:
         # find_new_episodes uses each podcast's subscribed_at watermark — only
-        # episodes that arrived in the DB after subscribing get auto-enqueued.
-        new_ids = find_new_episodes(self.conn)
+        # episodes that arrived in the DB after subscribing get auto-enqueued —
+        # and drops episodes whose pipeline is complete, has spent its
+        # auto-retry budget, or failed within the cooldown, so this runs to a
+        # fixed point instead of re-enqueueing every finished episode as a
+        # no-op pipeline on every sync.
+        new_ids = find_new_episodes(
+            self.conn,
+            auto_retry_pipelines=self.cfg.auto_retry_pipelines,
+            auto_retry_cooldown_hours=self.cfg.auto_retry_cooldown_hours,
+        )
         for episode_id in new_ids:
             if self.shutdown.is_set():
                 return
