@@ -17,6 +17,67 @@ ACTIVE_KIND_SUBSELECT = (
     "ORDER BY j.id LIMIT 1)"
 )
 
+# Predicate (over an ``episodes e`` alias) for "this episode still needs the
+# pipeline and the system may try it again on its own". The single definition
+# of automatic enqueue policy — find_new_episodes (worker, every sync) and
+# queue_latest_unprocessed_episode (subscribe) both use it. It carries two
+# ``?`` placeholders; bind them with needs_pipeline_params(), positioned after
+# any placeholders that precede the predicate in the enclosing query. An
+# episode qualifies iff:
+#   - no summary exists: a summary means the pipeline is complete. Every job is
+#     an idempotent no-op past this point, so re-enqueueing only manufactures
+#     job rows.
+#   - no queued/running job exists: nothing is in flight.
+#   - fewer than ``auto_retry_pipelines`` failed jobs exist. Each pipeline that
+#     fails leaves exactly one 'failed' row (the other job is 'done' or
+#     'blocked'), so this is the count of automatic pipelines that have failed.
+#     Past the budget the episode is left alone until someone acts (Retry /
+#     Process / Resummarize in the UI or CLI), which is how a permanently
+#     broken download converges instead of failing forever.
+#   - no failed job finished within the last ``auto_retry_cooldown_hours``.
+#     max_attempts are burnt back-to-back within one drain, so a whisper
+#     restart or LLM outage exhausts a pipeline in seconds; the cooldown is
+#     what lets that self-heal on a later sync instead of spending the whole
+#     budget on one outage. finished_at is set by mark_job_failed as
+#     datetime('now') — UTC, 'YYYY-MM-DD HH:MM:SS' — so the comparison against
+#     datetime('now', '-N hours') is a plain string compare in the same format.
+#     A cooldown of 0 disables the wait. A failed row with NULL finished_at
+#     would count toward the budget but never toward the cooldown; none can
+#     exist (mark_job_failed always stamps it, retry_job clears it only while
+#     moving the row out of 'failed'), noted so nobody has to re-derive it.
+#     The budget counts every failed pipeline, manual ones included, and the
+#     first automatic run: budget 1 = never retry automatically. Config
+#     loading rejects a budget < 1 (it would block first-time discovery too).
+# A transcript-but-no-summary episode with no jobs still qualifies: enqueueing
+# the full pipeline is right there, since transcribe short-circuits on the
+# existing transcript and summarize does the missing work.
+# Note that cancel_job *deletes* queued/blocked rows rather than marking them,
+# so a pipeline cancelled before it ran leaves no trace and is rediscovered on
+# the next sync (pre-existing behaviour; cancel is "not now", not "never").
+NEEDS_PIPELINE_PREDICATE = (
+    "NOT EXISTS (SELECT 1 FROM summaries s WHERE s.episode_id = e.id) "
+    "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.episode_id = e.id "
+    "AND j.status IN ('queued', 'running')) "
+    "AND (SELECT COUNT(*) FROM jobs j WHERE j.episode_id = e.id "
+    "AND j.status = 'failed') < ? "
+    "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.episode_id = e.id "
+    "AND j.status = 'failed' AND j.finished_at > datetime('now', ?))"
+)
+
+# Defaults mirror Config.auto_retry_pipelines / auto_retry_cooldown_hours so
+# direct callers (CLI, tests) get the same policy as the worker.
+DEFAULT_AUTO_RETRY_PIPELINES = 3
+DEFAULT_AUTO_RETRY_COOLDOWN_HOURS = 6
+
+
+def needs_pipeline_params(
+    auto_retry_pipelines: int = DEFAULT_AUTO_RETRY_PIPELINES,
+    auto_retry_cooldown_hours: int = DEFAULT_AUTO_RETRY_COOLDOWN_HOURS,
+) -> tuple[int, str]:
+    """Bind values for NEEDS_PIPELINE_PREDICATE's two placeholders, in order:
+    the failed-pipeline budget and the SQLite time modifier for the cooldown."""
+    return (auto_retry_pipelines, f"-{auto_retry_cooldown_hours} hours")
+
 
 def _from_row(row: sqlite3.Row) -> Job:
     return Job(**{k: row[k] for k in row.keys()})
@@ -107,26 +168,36 @@ def enqueue_episode_pipeline(
         return None
 
 
-def find_new_episodes(conn: sqlite3.Connection) -> list[int]:
-    """Episodes that should be auto-enqueued by the worker.
+def find_new_episodes(
+    conn: sqlite3.Connection, *,
+    auto_retry_pipelines: int = DEFAULT_AUTO_RETRY_PIPELINES,
+    auto_retry_cooldown_hours: int = DEFAULT_AUTO_RETRY_COOLDOWN_HOURS,
+) -> list[int]:
+    """Episodes the worker should auto-enqueue on this sync.
 
     Returns episode ids where:
       - the podcast is subscribed AND has a subscribed_at watermark
       - the episode's created_at is after the podcast's subscribed_at
-      - no active (queued/running) job exists for that episode yet
+      - NEEDS_PIPELINE_PREDICATE holds: no summary yet, no in-flight job,
+        fewer than ``auto_retry_pipelines`` failed pipelines, and no failure
+        within the last ``auto_retry_cooldown_hours``
+
+    The worker runs this every sync_interval, so the predicate must reach a
+    fixed point: an episode is returned until its pipeline completes (summary
+    saved) or has failed ``auto_retry_pipelines`` times, and never again after
+    that; between failures it waits out the cooldown. Before the predicate
+    carried the summary/failure exits, every finished episode past the
+    watermark was re-enqueued as a no-op pipeline on every sync, forever.
     """
     rows = conn.execute(
-        """SELECT e.id FROM episodes e
+        f"""SELECT e.id FROM episodes e
            JOIN podcasts p ON p.id = e.podcast_id
            WHERE p.subscribed = 1
              AND p.subscribed_at IS NOT NULL
              AND e.created_at > p.subscribed_at
-             AND NOT EXISTS (
-                SELECT 1 FROM jobs j
-                WHERE j.episode_id = e.id
-                  AND j.status IN ('queued', 'running')
-             )
+             AND {NEEDS_PIPELINE_PREDICATE}
            ORDER BY e.created_at""",
+        needs_pipeline_params(auto_retry_pipelines, auto_retry_cooldown_hours),
     ).fetchall()
     return [r["id"] for r in rows]
 

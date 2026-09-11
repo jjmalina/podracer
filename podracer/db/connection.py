@@ -102,6 +102,16 @@ CREATE INDEX IF NOT EXISTS idx_episodes_recency
 -- One active (queued/running) job per (episode, kind).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_unique
     ON jobs(episode_id, kind) WHERE status IN ('queued', 'running');
+
+-- Per-episode failure history for the discovery predicate
+-- (NEEDS_PIPELINE_PREDICATE): "how many failed jobs does this episode have"
+-- and "did one finish within the cooldown". The partial index above only
+-- covers active rows, so without this both walk every failed row in the table
+-- per episode. finished_at as the trailing column makes the cooldown check a
+-- covering range seek (episode_id=?, status='failed', finished_at>?) instead
+-- of a seek plus one table lookup per failed row.
+CREATE INDEX IF NOT EXISTS idx_jobs_episode_status_finished
+    ON jobs(episode_id, status, finished_at);
 """
 
 DEFAULT_CONFIG = {

@@ -60,6 +60,18 @@ backend = "openrouter"             # ollama, vllm, openrouter
 model = "deepseek/deepseek-v4-flash"
 # base_url = "http://localhost:11434"
 
+[daemon]
+sync_interval_minutes = 30         # how often to fetch feeds + enqueue new episodes
+drain_interval_seconds = 10        # how often to check the job queue
+max_attempts = 3                   # per-job attempts within one pipeline
+retry_backoff_seconds = 300        # currently unused (attempts retry back-to-back)
+# After auto_retry_pipelines pipelines fail (the first run counts; 1 = never
+# retry automatically; failed manual runs count too), or within
+# auto_retry_cooldown_hours of the last failure, the episode is left alone;
+# use Retry / Process in the UI to run it again. 0 hours disables the cooldown.
+auto_retry_pipelines = 3
+auto_retry_cooldown_hours = 6
+
 # Server-side config for `python -m podracer.whisper_service`
 # [whisper_service]
 # host = "0.0.0.0"

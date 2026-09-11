@@ -25,6 +25,7 @@ from podracer.db.episodes import (
 from podracer.db.jobs import (
     HEARTBEAT_KEY,
     LAST_SYNC_KEY,
+    NEEDS_PIPELINE_PREDICATE,
     WATERMARK_KEY,
     cancel_job,
     cascade_block_dependents,
@@ -45,6 +46,7 @@ from podracer.db.jobs import (
     init_worker_watermark,
     mark_job_done,
     mark_job_failed,
+    needs_pipeline_params,
     reset_running_jobs,
     retry_job,
     set_worker_heartbeat,
@@ -96,6 +98,7 @@ __all__ = [
     "save_summary", "get_summary", "delete_summary", "summary_exists",
     # jobs / watermark
     "WATERMARK_KEY", "LAST_SYNC_KEY", "HEARTBEAT_KEY",
+    "NEEDS_PIPELINE_PREDICATE", "needs_pipeline_params",
     "init_worker_watermark", "get_worker_watermark", "set_worker_watermark",
     "get_worker_last_sync", "set_worker_last_sync",
     "get_worker_heartbeat", "set_worker_heartbeat",

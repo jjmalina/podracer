@@ -47,8 +47,23 @@ class Config:
     # Daemon / worker
     sync_interval_minutes: int = 30      # how often to fetch feeds + enqueue
     drain_interval_seconds: int = 10     # how often to check the job queue
-    max_attempts: int = 3
+    max_attempts: int = 3                # per-job attempts within one pipeline
+    # Loaded for config compatibility but not consulted anywhere: failed
+    # attempts are requeued immediately and re-claimed on the next drain pass,
+    # so a job's max_attempts burn back-to-back. Not the same knob as the
+    # cooldown below, which spans *pipelines*, not attempts.
     retry_backoff_seconds: int = 300
+    # Automatic re-enqueue of a failed pipeline (worker discovery each sync,
+    # and the subscribe-time auto-queue). An episode is enqueued again only if
+    # fewer than auto_retry_pipelines of its pipelines have failed AND its last
+    # failure is older than auto_retry_cooldown_hours; past the budget it is
+    # left alone until someone uses Retry / Process in the UI. The budget counts
+    # the first automatic pipeline (1 = never retry automatically) and failed
+    # manual pipelines count toward it too. Cooldown 0 disables the wait.
+    # Manual actions are never subject to either. Validated >= 1 / >= 0 at
+    # load: a budget of 0 would silently stop first-time discovery as well.
+    auto_retry_pipelines: int = 3
+    auto_retry_cooldown_hours: int = 6
     feed_connect_timeout_seconds: int = 10   # feed fetch: connect timeout
     feed_read_timeout_seconds: int = 30      # feed fetch: read timeout
     # /health reports "stale" if the worker's progress heartbeat is older than
@@ -168,6 +183,18 @@ def load_config() -> Config:
         config.drain_interval_seconds = daemon.get("drain_interval_seconds", config.drain_interval_seconds)
         config.max_attempts = daemon.get("max_attempts", config.max_attempts)
         config.retry_backoff_seconds = daemon.get("retry_backoff_seconds", config.retry_backoff_seconds)
+        config.auto_retry_pipelines = daemon.get("auto_retry_pipelines", config.auto_retry_pipelines)
+        config.auto_retry_cooldown_hours = daemon.get(
+            "auto_retry_cooldown_hours", config.auto_retry_cooldown_hours,
+        )
+        if config.auto_retry_pipelines < 1:
+            raise ValueError(
+                "[daemon] auto_retry_pipelines must be >= 1 — it counts the first "
+                "automatic pipeline (1 = never retry automatically); 0 would stop "
+                "the worker from enqueueing anything",
+            )
+        if config.auto_retry_cooldown_hours < 0:
+            raise ValueError("[daemon] auto_retry_cooldown_hours must be >= 0 (0 disables the cooldown)")
         config.feed_connect_timeout_seconds = daemon.get(
             "feed_connect_timeout_seconds", config.feed_connect_timeout_seconds,
         )
