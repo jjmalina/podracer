@@ -21,14 +21,18 @@ def _job_row(conn, job_id: int):
     ).fetchone()
 
 
-@pytest.fixture
-def claimed_job(conn):
+def _claim_transcribe(conn, *, max_attempts: int):
     pid = upsert_podcast(conn, "P", None, "https://e/f.xml")
     upsert_episode(conn, pid, feed_ep("ep1"))
-    enqueue_episode_pipeline(conn, 1, max_attempts=3)
+    enqueue_episode_pipeline(conn, 1, max_attempts=max_attempts)
     job = claim_next_job(conn)
     assert job is not None and job.kind == "transcribe"
     return job
+
+
+@pytest.fixture
+def claimed_job(conn):
+    return _claim_transcribe(conn, max_attempts=3)
 
 
 def test_failure_is_persisted_before_sentry_capture(conn, claimed_job, monkeypatch):
@@ -70,3 +74,29 @@ def test_crash_inside_sentry_capture_still_counts_the_attempt(conn, claimed_job,
     row = _job_row(conn, claimed_job.id)
     assert row["status"] != "running"
     assert row["attempts"] == 1
+
+
+def test_crash_inside_sentry_capture_still_blocks_dependents(conn, monkeypatch):
+    """Terminal failure: the dependent summarize job must already be 'blocked'
+    when Sentry runs, or a crash there strands it as 'queued' behind a failed
+    dependency that claim_next_job will never satisfy."""
+    job = _claim_transcribe(conn, max_attempts=1)
+
+    def boom_dispatch(job):
+        raise RuntimeError("boom")
+
+    def dying_capture(exc=None):
+        raise MemoryError("simulated OOM during event serialization")
+
+    monkeypatch.setattr(worker_mod.sentry_sdk, "capture_exception", dying_capture)
+    w = Worker(conn, Config(max_attempts=1))
+    monkeypatch.setattr(w, "_dispatch", boom_dispatch)
+
+    with pytest.raises(MemoryError):
+        w._run_job(job)
+
+    assert _job_row(conn, job.id)["status"] == "failed"
+    dependent = conn.execute(
+        "SELECT status FROM jobs WHERE depends_on_job_id = ?", (job.id,),
+    ).fetchone()
+    assert dependent["status"] == "blocked"
