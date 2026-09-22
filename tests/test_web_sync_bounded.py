@@ -59,5 +59,5 @@ def test_sync_all_passes_the_shared_cap_to_every_podcast(tmp_path, monkeypatch):
 
 def test_worker_and_web_share_one_cap():
     """Guard against the two drifting apart again (worker had a magic 10)."""
-    assert worker_mod.SYNC_EPISODE_LIMIT is SYNC_EPISODE_LIMIT
-    assert podcasts_routes.SYNC_EPISODE_LIMIT is SYNC_EPISODE_LIMIT
+    assert worker_mod.SYNC_EPISODE_LIMIT == SYNC_EPISODE_LIMIT
+    assert podcasts_routes.SYNC_EPISODE_LIMIT == SYNC_EPISODE_LIMIT

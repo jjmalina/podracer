@@ -198,7 +198,7 @@ def find_new_episodes(
            JOIN podcasts p ON p.id = e.podcast_id
            WHERE p.subscribed = 1
              AND p.subscribed_at IS NOT NULL
-             AND datetime(COALESCE(e.published_at, e.created_at))
+             AND COALESCE(datetime(e.published_at), datetime(e.created_at))
                  > datetime(p.subscribed_at)
              AND {NEEDS_PIPELINE_PREDICATE}
            ORDER BY e.created_at""",

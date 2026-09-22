@@ -174,7 +174,7 @@ def cmd_episodes(args):
             sys.exit(1)
         if args.sync:
             logger.info("Syncing: %s", podcast.title)
-            sync_podcast(conn, args.podcast_id, podcast.feed_url)
+            sync_podcast(conn, args.podcast_id, podcast.feed_url, limit=SYNC_EPISODE_LIMIT)
     else:
         logger.error("Provide a podcast_id or --feed <url>.")
         sys.exit(1)

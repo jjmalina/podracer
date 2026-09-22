@@ -10,7 +10,7 @@ from podracer.db import (
 )
 from podracer.download import ensure_artwork_cached
 from podracer.feed import fetch_feed
-from podracer.process import apply_feed, queue_latest_unprocessed_episode
+from podracer.process import SYNC_EPISODE_LIMIT, apply_feed, queue_latest_unprocessed_episode
 from podracer.search import search_podcasts
 from podracer.web.deps import get_db, validate_external_url
 
@@ -62,7 +62,7 @@ def subscribe_from_search(request: Request, feed_url: str, db: sqlite3.Connectio
     validate_external_url(feed_url)
     cfg = request.app.state.cfg
     # Single parse: metadata for the podcast row, plus episodes + categories.
-    meta, episodes = fetch_feed(feed_url, limit=10)
+    meta, episodes = fetch_feed(feed_url, limit=SYNC_EPISODE_LIMIT)
     podcast_id = upsert_podcast(db, meta.title, meta.author, feed_url,
                                 meta.artwork_url, meta.description)
     subscribe(db, podcast_id)
