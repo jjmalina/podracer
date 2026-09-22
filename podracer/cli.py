@@ -36,6 +36,7 @@ from podracer.feed import configure_timeouts, fetch_feed, fetch_feed_metadata
 from podracer.logging_config import configure_logging
 from podracer.models import PodcastSummary
 from podracer.process import (
+    SYNC_EPISODE_LIMIT,
     apply_feed,
     process_episode,
     queue_latest_unprocessed_episode,
@@ -558,7 +559,8 @@ def main():
 
     p_subscribe = subparsers.add_parser("subscribe", help="Subscribe to a podcast via RSS URL")
     p_subscribe.add_argument("feed_url", help="RSS feed URL")
-    p_subscribe.add_argument("--limit", type=int, default=10, help="Number of recent episodes to sync (default: 10)")
+    p_subscribe.add_argument("--limit", type=int, default=SYNC_EPISODE_LIMIT,
+                             help=f"Number of recent episodes to sync (default: {SYNC_EPISODE_LIMIT})")
     p_subscribe.add_argument("--no-queue", action="store_true",
                              help="Don't auto-queue the latest episode for processing")
     p_subscribe.set_defaults(func=cmd_subscribe)
@@ -621,7 +623,8 @@ def main():
 
     p_sync = subparsers.add_parser("sync", help="Sync podcast feeds")
     p_sync.add_argument("podcast_id", type=int, nargs="?", help="Podcast ID (omit to sync all subscriptions)")
-    p_sync.add_argument("--limit", type=int, default=10, help="Number of recent episodes to sync (default: 10)")
+    p_sync.add_argument("--limit", type=int, default=SYNC_EPISODE_LIMIT,
+                             help=f"Number of recent episodes to sync (default: {SYNC_EPISODE_LIMIT})")
     p_sync.set_defaults(func=cmd_sync)
 
     p_worker = subparsers.add_parser("worker", help="Run the sync + processing worker")

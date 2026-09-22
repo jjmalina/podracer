@@ -58,10 +58,23 @@ def apply_feed(
     return len(episodes)
 
 
+# How many recent episodes a routine sync pulls from a feed. Shared by the
+# worker's scheduled sync and the web "Sync" buttons so no UI click can fetch
+# an entire back catalog: on 2026-09-17 an unbounded Sync inserted 274 Macro
+# Voices episodes, the auto-enqueue treated them all as new, and ~13k audio
+# minutes went to Deepgram before credits ran out. Only the CLI's explicit
+# --limit is allowed to go past this (a deliberate backfill).
+SYNC_EPISODE_LIMIT = 10
+
+
 def sync_podcast(
     conn: sqlite3.Connection, podcast_id: int, feed_url: str, limit: int | None = None,
 ) -> int:
-    """Fetch a feed once and apply it (episodes + last_synced + tags)."""
+    """Fetch a feed once and apply it (episodes + last_synced + tags).
+
+    ``limit=None`` fetches the whole feed; routine callers pass
+    ``SYNC_EPISODE_LIMIT``.
+    """
     meta, episodes = fetch_feed(feed_url, limit=limit)
     return apply_feed(conn, podcast_id, meta, episodes)
 

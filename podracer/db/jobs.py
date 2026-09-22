@@ -177,7 +177,11 @@ def find_new_episodes(
 
     Returns episode ids where:
       - the podcast is subscribed AND has a subscribed_at watermark
-      - the episode's created_at is after the podcast's subscribed_at
+      - the episode was *published* after the podcast's subscribed_at
+        (falling back to created_at when the feed gave no publish date).
+        Comparing the DB insert time instead made any backfill look like a
+        batch of new releases: on 2026-09-17 one unbounded web Sync inserted
+        274 back-catalog episodes and every one was auto-enqueued.
       - NEEDS_PIPELINE_PREDICATE holds: no summary yet, no in-flight job,
         fewer than ``auto_retry_pipelines`` failed pipelines, and no failure
         within the last ``auto_retry_cooldown_hours``
@@ -194,7 +198,8 @@ def find_new_episodes(
            JOIN podcasts p ON p.id = e.podcast_id
            WHERE p.subscribed = 1
              AND p.subscribed_at IS NOT NULL
-             AND e.created_at > p.subscribed_at
+             AND datetime(COALESCE(e.published_at, e.created_at))
+                 > datetime(p.subscribed_at)
              AND {NEEDS_PIPELINE_PREDICATE}
            ORDER BY e.created_at""",
         needs_pipeline_params(auto_retry_pipelines, auto_retry_cooldown_hours),

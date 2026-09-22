@@ -17,7 +17,7 @@ from podracer.db import (
 )
 from podracer.download import ensure_artwork_cached
 from podracer.feed import fetch_feed_metadata
-from podracer.process import sync_podcast
+from podracer.process import SYNC_EPISODE_LIMIT, sync_podcast
 from podracer.web.deps import get_db
 
 router = APIRouter()
@@ -87,7 +87,7 @@ def podcast_unsubscribe(request: Request, podcast_id: int, db: sqlite3.Connectio
 def podcast_sync(request: Request, podcast_id: int, db: sqlite3.Connection = Depends(get_db)):
     podcast = get_podcast(db, podcast_id)
     if podcast:
-        sync_podcast(db, podcast_id, podcast.feed_url)
+        sync_podcast(db, podcast_id, podcast.feed_url, limit=SYNC_EPISODE_LIMIT)
     return RedirectResponse(url=f"/podcasts/{podcast_id}", status_code=303)
 
 
@@ -95,7 +95,7 @@ def podcast_sync(request: Request, podcast_id: int, db: sqlite3.Connection = Dep
 def podcast_sync_all(request: Request, db: sqlite3.Connection = Depends(get_db)):
     for podcast in get_all_podcasts(db):
         try:
-            sync_podcast(db, podcast.id, podcast.feed_url)
+            sync_podcast(db, podcast.id, podcast.feed_url, limit=SYNC_EPISODE_LIMIT)
         except Exception:
             # A single dead/slow feed (feed fetch can now raise) must not abort
             # the whole batch — drop its partial writes, log, and keep going so
