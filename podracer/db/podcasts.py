@@ -51,8 +51,10 @@ def upsert_podcast(
 
 
 def subscribe(conn: sqlite3.Connection, podcast_id: int) -> None:
-    # subscribed_at is the per-podcast watermark — only episodes whose
-    # created_at is later than this get auto-enqueued by the worker.
+    # subscribed_at is the per-podcast watermark — only episodes *published*
+    # after this get auto-enqueued by the worker (find_new_episodes). Rows that
+    # merely arrive in the DB later (a sync or CLI backfill of the back
+    # catalogue) are listed, never auto-processed.
     conn.execute(
         "UPDATE podcasts SET subscribed = 1, subscribed_at = datetime('now') "
         "WHERE id = ?",

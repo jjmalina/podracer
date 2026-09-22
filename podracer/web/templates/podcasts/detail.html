@@ -30,7 +30,10 @@
 </form>
 {% endif %}
 <form method="post" action="/podcasts/{{ podcast.id }}/sync" style="display:inline">
-  <button type="submit" class="outline">Sync Episodes</button>
+  <button type="submit" class="outline"
+          title="Fetch the newest {{ sync_limit }} episodes from the feed into this list. The button transcribes nothing: the worker auto-queues only episodes published after you subscribed; queue anything older from its episode page.">
+    Sync latest {{ sync_limit }} episodes
+  </button>
 </form>
 
 <h2>Episodes</h2>

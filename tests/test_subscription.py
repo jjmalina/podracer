@@ -4,8 +4,11 @@ These tests cover the bug we hit in production where subscribing to a podcast
 caused all 300 existing episodes to get auto-enqueued. The contract is:
 
   - On subscribe, podracer records a per-podcast `subscribed_at` watermark.
-  - Worker only auto-enqueues episodes whose `created_at` is *after* that
-    watermark.
+  - Worker only auto-enqueues episodes *published* after that watermark
+    (`created_at` stands in when the feed gave no publish date). The insert
+    time alone isn't enough: a backfill re-inserts old episodes with a fresh
+    `created_at`, which is how 274 back-catalog episodes got auto-enqueued
+    on 2026-09-17.
   - Unsubscribed podcasts never enqueue.
   - Re-subscribing resets the watermark to "now".
 """
@@ -141,3 +144,35 @@ def test_podcast_with_no_subscribed_at_skipped(conn):
     conn.commit()
     upsert_episode(conn, pid, feed_ep("fresh"))
     assert find_new_episodes(conn) == []
+
+
+def test_backfilled_old_episode_is_not_enqueued(conn):
+    """A full-feed sync after subscribing inserts back-catalog episodes with a
+    fresh created_at. Their publish date is what says they're old."""
+    pid = upsert_podcast(conn, "P", None, "https://e/f.xml")
+    subscribe(conn, pid)
+    set_podcast_subscribed_at(conn, pid, "2026-05-20 00:00:00")
+
+    upsert_episode(conn, pid, feed_ep("backfill"))
+    set_episode_created_at(conn, 1, "2026-09-17 20:22:48")  # inserted after subscribe
+    conn.execute("UPDATE episodes SET published_at='2022-11-23T22:39:32' WHERE id=1")
+    conn.commit()
+
+    assert find_new_episodes(conn) == []
+
+
+def test_published_after_subscribe_is_enqueued_across_iso_formats(conn):
+    """published_at is stored ISO-8601 with a 'T'; subscribed_at uses a space.
+    A raw string compare puts 'T' after ' ' and misorders same-day values, so
+    the watermark must compare real datetimes."""
+    pid = upsert_podcast(conn, "P", None, "https://e/f.xml")
+    subscribe(conn, pid)
+    set_podcast_subscribed_at(conn, pid, "2026-05-20 12:00:00")
+
+    upsert_episode(conn, pid, feed_ep("same-day-later"))
+    upsert_episode(conn, pid, feed_ep("same-day-earlier"))
+    conn.execute("UPDATE episodes SET published_at='2026-05-20T13:00:00' WHERE id=1")
+    conn.execute("UPDATE episodes SET published_at='2026-05-20T11:00:00' WHERE id=2")
+    conn.commit()
+
+    assert find_new_episodes(conn) == [1]

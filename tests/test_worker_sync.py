@@ -10,6 +10,7 @@ import podracer.process as process_mod
 from podracer.config import Config
 from podracer.db import get_podcast, subscribe, upsert_episode, upsert_podcast
 from podracer.models import FeedMetadata
+from podracer.process import SYNC_EPISODE_LIMIT
 from podracer.worker import Worker
 from tests.conftest import feed_ep
 
@@ -41,6 +42,9 @@ def feeds(monkeypatch):
     canned: dict[str, list | tuple] = {}
 
     def fake_fetch_feed(url, limit=None):
+        # The scheduled sync must never be unbounded (2026-09-17: an unbounded
+        # fetch pulled a 274-episode back catalogue into the queue).
+        assert limit == SYNC_EPISODE_LIMIT
         value = canned[url]
         categories, episodes = value if isinstance(value, tuple) else ([], value)
         return FeedMetadata(title="t", feed_url=url, categories=categories), episodes

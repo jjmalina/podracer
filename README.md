@@ -164,11 +164,17 @@ captured via the FastAPI integration; worker job failures are captured explicitl
 (tagged with `episode_id`/`job_kind`). Optional `PODRACER_ENV` sets the Sentry
 environment (default `production`).
 
-The worker uses a watermark — on first run it sets the watermark to "now"
-so the existing backlog is NOT auto-processed. New episodes published
-after that get picked up automatically. To bulk-enqueue old episodes,
-roll the watermark back manually (Python REPL with
-`set_worker_watermark(conn, '2020-01-01 00:00:00')`).
+Auto-processing is governed per podcast by its subscription date: on each
+sync the worker queues episodes **published after you subscribed** that have
+no summary yet. Older episodes are never auto-processed. Syncing — the
+worker's scheduled sync, the podcast page's "Sync latest N episodes" button,
+"Sync All", and the `subscribe`/`sync` CLI defaults — fetches only the newest
+N entries of a feed (`SYNC_EPISODE_LIMIT`, 10) into the episode list; it does
+not transcribe anything by itself. To process older episodes, queue them from
+the episode page, or pull more of the back catalogue with an explicit CLI
+`podracer sync <id> --limit <n>` and queue what you want (a deliberate
+command, not a button: on 2026-09-17 an unbounded sync auto-queued 274
+episodes and ~13k minutes of paid transcription).
 
 ## CLI reference
 

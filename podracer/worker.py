@@ -26,7 +26,12 @@ from podracer.db import (
 )
 from podracer.download import ensure_artwork_cached
 from podracer.models import Job
-from podracer.process import summarize_episode, sync_podcast, transcribe_episode
+from podracer.process import (
+    SYNC_EPISODE_LIMIT,
+    summarize_episode,
+    sync_podcast,
+    transcribe_episode,
+)
 from podracer.sd_notify import notify
 
 
@@ -120,7 +125,8 @@ class Worker:
             try:
                 # Upserts episodes, bumps last_synced_at, and refreshes topic
                 # tags from the feed's iTunes categories — one shared path.
-                count = sync_podcast(self.conn, podcast.id, podcast.feed_url, limit=10)
+                count = sync_podcast(self.conn, podcast.id, podcast.feed_url,
+                                     limit=SYNC_EPISODE_LIMIT)
                 # Backstop the subscribe-time copy: heal any podcast whose cover
                 # wasn't cached yet (host was down, subscribed before this landed).
                 ensure_artwork_cached(self.conn, podcast, self.cfg.media_dir)
