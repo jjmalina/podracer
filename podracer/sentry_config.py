@@ -44,5 +44,11 @@ def configure_sentry(dsn: str | None = None) -> None:
         # log-based event capture would be stacktrace-less. Events come from the
         # FastAPI integration (web) and explicit capture_exception (worker).
         integrations=[LoggingIntegration(event_level=None)],
+        # Don't snapshot local variables into events. The SDK builds a full
+        # repr() of every local in every frame before truncating it; a failed
+        # Deepgram call has the entire audio file (tens of MB of bytes) bound
+        # in several frames, and each repr is ~4x the file size. On the 2 GB
+        # worker LXC that single capture_exception reached ~1.95 GB and got
+        # OOM-killed (2026-09-18). The traceback is enough to triage.
+        include_local_variables=False,
     )
-    _configured = True

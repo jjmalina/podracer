@@ -40,3 +40,12 @@ def test_idempotent_same_dsn(monkeypatch):
     sc.configure_sentry("https://key@errors.example/1")
     sc.configure_sentry("https://key@errors.example/1")
     assert len(calls) == 1
+
+
+def test_local_variables_are_not_captured(monkeypatch):
+    """Frame locals can hold a whole audio file; serializing them OOM-killed the
+    worker on 2026-09-18. The traceback alone is enough to triage."""
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    calls = _spy_init(monkeypatch)
+    sc.configure_sentry("https://key@errors.example/1")
+    assert calls[0]["include_local_variables"] is False

@@ -186,8 +186,15 @@ class Worker:
                 logger.info("job_done")
             except Exception as e:
                 logger.exception("job_failed", error=str(e))
-                sentry_sdk.capture_exception(e)
+                # Record the attempt BEFORE reporting to Sentry. capture_exception
+                # serializes the failing frames, which for a transcribe job can
+                # hold the whole audio file; if that blows the memory cgroup
+                # (2026-09-18: 11 OOM kills in a row), the job is still "running",
+                # so orphan recovery requeues it and the next start dies the same
+                # way — forever on attempt 1. Persist first so the retry budget
+                # advances even if the report itself is what kills us.
                 terminal = mark_job_failed(self.conn, job.id, str(e))
+                sentry_sdk.capture_exception(e)
                 if terminal:
                     blocked = cascade_block_dependents(self.conn, job.id)
                     logger.warning("job_exhausted_retries", blocked=blocked)
