@@ -186,11 +186,19 @@ class Worker:
                 logger.info("job_done")
             except Exception as e:
                 logger.exception("job_failed", error=str(e))
-                sentry_sdk.capture_exception(e)
+                # Finish ALL bookkeeping before reporting to Sentry.
+                # capture_exception serializes the failing frames, which for a
+                # transcribe job can hold the whole audio file; if that blows the
+                # memory cgroup (2026-09-18: 11 OOM kills in a row), anything
+                # after it never runs. With the report last, the retry budget
+                # advances and dependents get blocked even if the report itself
+                # is what kills us — instead of orphan recovery requeueing the
+                # still-"running" job and the next start dying the same way.
                 terminal = mark_job_failed(self.conn, job.id, str(e))
                 if terminal:
                     blocked = cascade_block_dependents(self.conn, job.id)
                     logger.warning("job_exhausted_retries", blocked=blocked)
+                sentry_sdk.capture_exception(e)
 
     def _dispatch(self, job: Job) -> None:
         if job.kind == "transcribe":
