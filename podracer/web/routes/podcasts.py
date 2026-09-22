@@ -128,4 +128,5 @@ def podcast_detail(
         "format_duration": _format_duration,
         "current_status": status,
         "statuses": STATUSES,
+        "sync_limit": SYNC_EPISODE_LIMIT,
     })
