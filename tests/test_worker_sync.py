@@ -7,10 +7,10 @@ process module, where the worker reaches them.
 import pytest
 
 import podracer.process as process_mod
-from podracer.process import SYNC_EPISODE_LIMIT
 from podracer.config import Config
 from podracer.db import get_podcast, subscribe, upsert_episode, upsert_podcast
 from podracer.models import FeedMetadata
+from podracer.process import SYNC_EPISODE_LIMIT
 from podracer.worker import Worker
 from tests.conftest import feed_ep
 
