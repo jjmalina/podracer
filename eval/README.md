@@ -1,0 +1,105 @@
+# LLM prompt evals
+
+One eval per LLM prompt in the episode pipeline (`podracer/summarize.py`):
+
+| eval | prompt | unit | frozen upstream input (from the prod-stored summary) |
+|---|---|---|---|
+| `speakers` | `SPEAKER_ID_PROMPT` | episode | none (raw transcript + show notes) |
+| `summary` | `SUMMARY_PROMPT` | episode | speaker key |
+| `chapters` | `CHAPTERS_PROMPT` | episode | speaker key |
+| `chapter_detail` | `CHAPTER_DETAIL_PROMPT` | one chapter | speaker key + chapter list |
+| `highlights` | `HIGHLIGHTS_PROMPT` | episode | speaker key |
+
+Each eval calls the same function the worker calls for that pass, with the
+same content checks and retries, so what is measured is what ships. Downstream
+passes take their upstream inputs from the summary prod already stored, so a
+model's chapter writeups are not penalized for its own speaker-ID mistakes.
+Transcription is out of scope (see `docs/plans/transcription-eval.md`).
+
+## Dataset
+
+`manifest.json` (committed) lists prod episode ids with tags describing why
+each is in the set: short/mid/long/very-long, speaker count, teaser cold-open,
+solo monologue, panel, technical vs finance. The transcripts, show notes and
+prod summaries live in `eval/data/<id>/case.json`, which is **gitignored** —
+this is a public repo and the transcripts and speaker names are not.
+
+Pull them from the deployment over SSH (read-only sqlite on the host):
+
+```bash
+export PODRACER_EVAL_SSH="-i ~/.ssh/<key> user@host"   # or pass --ssh
+python -m podracer.evals fetch                          # fills eval/data/
+```
+
+`eval/data/<id>/labels.json` is the speaker ground truth for the `speakers`
+eval. It is **seeded from the prod output** and marked `"verified": false`;
+until you correct it by hand, the labels metrics measure agreement with prod
+(i.e. with whatever model produced it), not correctness. The judge score does
+not depend on the labels.
+
+## Running
+
+API keys come from env vars (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`), falling
+back to the usual `config.toml` / `.credentials/` resolution.
+
+```bash
+# Haiku 5.5 on the summary prompt, 3 runs per episode, judged by Opus 5.5
+python -m podracer.evals run --eval summary --backend anthropic --model claude-haiku-5-5 --effort low
+
+# The incumbent, same eval, same judge, with the prod provider allowlist
+python -m podracer.evals run --eval summary --backend openrouter --model deepseek/deepseek-v4-flash \
+    --providers deepinfra,digitalocean,parasail,venice,gmicloud,azure
+
+# Compare every summary run side by side (add --by-episode to see where they differ)
+python -m podracer.evals compare eval/runs/summary/*
+```
+
+Useful flags: `--reps N` (default 3), `--ids 1,2,3` (subset of the manifest),
+`--chapters-per-episode K` (chapter_detail: evenly spaced sample to bound
+cost), `--no-judge` (structural metrics only, free), `--judge-backend
+openrouter --judge-model <model>` (a non-Anthropic judge, to check for
+same-family bias when grading Claude), `--workers N`, `--json`.
+
+Each run writes `eval/runs/<eval>/<model>-<timestamp>/`:
+
+- `meta.json` — what ran (model, effort, judge, reps, ids, git rev)
+- `results.jsonl` — one row per (episode, rep, item): structural metrics,
+  pass/fail against the production content check, judge scores, issues,
+  token usage, latency, failure class on error
+- `outputs/<ep>_rep<k>[_cNN].json` — the generated output plus the judge's
+  per-dimension rationale and issue list, for reading individual losses
+- `summary.json` — the aggregate `compare` prints
+
+## Scoring
+
+**Structural (free, deterministic).** The production content guard for the
+pass (`passed`), plus per-eval metrics: speaker label coverage and
+name precision/recall vs labels; chapter count, coverage of the timeline,
+duplicate starts, teaser detection; highlight count, kind split, decile
+coverage across the episode, attribution to a known speaker, duplicate ratio;
+writeup length vs slice length. Error rate and failure class (degenerate
+output after retries, provider policy, HTTP) are first-class metrics: the
+incumbent's known failure mode is transient degenerate output.
+
+**Judge (LLM, pointwise 1-5 per dimension).** Rubrics are in
+`podracer/evals/judge.py`, derived from each prompt's own instructions. The
+judge sees the exact source the model saw, the model's instructions, and the
+output; it grades against the source only, lists concrete issues, and gives a
+holistic `overall`. The transcript block carries `cache_control` so the three
+reps of an episode (and its four full-transcript evals) share one cached
+prefix on the anthropic backend.
+
+Caveats: a pointwise judge is noisier than a pairwise one, so run `--reps 3`
+and read the `±` (95% CI over items) before calling a difference real. An
+Anthropic judge grading an Anthropic generator has a same-family bias risk;
+spot-check a subset with a non-Anthropic judge via OpenRouter. Cost in the
+table ignores cache discounts (an upper bound).
+
+## Rough cost
+
+Generation is pennies per episode on either Haiku 5.5 or DeepSeek V4 Flash.
+The judge dominates: an Opus 5.5 judge reading a full transcript is roughly
+$0.20-0.50 per item, so a 14-episode × 3-rep run of one full-transcript eval is
+on the order of $10-20 before caching; `chapter_detail` judges only the
+chapter slice and is much cheaper per item. Use `--ids` and `--reps 1` to
+pilot before a full run.

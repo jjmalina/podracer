@@ -1,10 +1,13 @@
+import contextvars
+import functools
 import json
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
+import anthropic
 import httpx
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -14,6 +17,7 @@ from podracer import logger
 from podracer.models import (
     Chapter,
     ChapterList,
+    Highlight,
     HighlightList,
     PodcastSummary,
     SpeakerIdentification,
@@ -35,6 +39,15 @@ DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 131072
 DEFAULT_MAX_TOKENS = 16384
 CHAPTER_DETAIL_WORKERS = 5
+# Anthropic: thinking depth for structured-output passes. Low mirrors the other
+# backends (thinking off / reasoning effort "none"): these are JSON extraction
+# passes over a transcript that is already in context, and the April-2026 model
+# comparison found no quality benefit from reasoning on them. Tunable per
+# backend (Backend.effort) so the eval harness can sweep it.
+AnthropicEffort = Literal["low", "medium", "high", "xhigh", "max"]
+ANTHROPIC_EFFORTS: tuple[AnthropicEffort, ...] = ("low", "medium", "high", "xhigh", "max")
+ANTHROPIC_DEFAULT_EFFORT: AnthropicEffort = "low"
+ANTHROPIC_MAX_RETRIES = 5
 
 # --- LLM output quality guards ---------------------------------------------
 # See docs/plans/2026-06-12-llm-output-quality-guards.md. deepseek-v4-flash via
@@ -61,6 +74,9 @@ class Backend:
     api_key: str | None = None
     # openrouter only: provider slugs the request may be routed to (None = any).
     providers: list[str] | None = None
+    # anthropic: output_config.effort; openrouter: reasoning.effort (None =
+    # reasoning off, which some hosted models — Claude Opus/Sonnet 5.5 — reject).
+    effort: AnthropicEffort | None = None
 
     @staticmethod
     def ollama(model: str, base_url: str = "http://localhost:11434") -> "Backend":
@@ -72,14 +88,35 @@ class Backend:
 
     @staticmethod
     def openrouter(model: str, api_key: str,
-                   providers: list[str] | None = None) -> "Backend":
+                   providers: list[str] | None = None,
+                   effort: str | None = None) -> "Backend":
         return Backend(
             name="openrouter",
             base_url="https://openrouter.ai/api",
             model=model,
             api_key=api_key,
             providers=validate_allowlist(providers, where="providers"),
+            effort=validate_effort(effort) if effort is not None else None,
         )
+
+    @staticmethod
+    def anthropic(model: str, api_key: str, effort: str = ANTHROPIC_DEFAULT_EFFORT) -> "Backend":
+        return Backend(
+            name="anthropic",
+            base_url="https://api.anthropic.com",
+            model=model,
+            api_key=api_key,
+            effort=validate_effort(effort),
+        )
+
+
+def validate_effort(value: object, *, where: str = "effort") -> AnthropicEffort:
+    """One boundary for the Anthropic effort setting: config, CLI flags and the
+    Backend factory all pass through here, so a typo fails at startup instead
+    of as a 400 on the first summarize job."""
+    if value in ANTHROPIC_EFFORTS:
+        return cast(AnthropicEffort, value)
+    raise ValueError(f"{where} must be one of {list(ANTHROPIC_EFFORTS)}; got {value!r}")
 
 
 SPEAKER_ID_PROMPT = """\
@@ -379,6 +416,15 @@ class TokenUsage(BaseModel):
         )
 
     @staticmethod
+    def from_anthropic(usage: anthropic.types.Usage) -> "TokenUsage":
+        """Anthropic ``usage``: ``input_tokens`` excludes cache reads/writes, so
+        fold them back in — ``input_tokens`` here means "prompt size", as it
+        does for the OpenAI-compatible backends."""
+        inp = usage.input_tokens + (usage.cache_read_input_tokens or 0) + (usage.cache_creation_input_tokens or 0)
+        out = usage.output_tokens
+        return TokenUsage(input_tokens=inp, output_tokens=out, total_tokens=inp + out)
+
+    @staticmethod
     def from_ollama(data: dict) -> "TokenUsage":
         """Ollama /api/chat response: prompt_eval_count / eval_count."""
         inp = data.get("prompt_eval_count")
@@ -533,7 +579,7 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
             {"role": "user", "content": user},
         ],
         "max_tokens": DEFAULT_MAX_TOKENS,
-        "reasoning": {"effort": "none"},
+        "reasoning": {"effort": backend.effort or "none"},
         "response_format": {
             "type": "json_schema",
             "json_schema": {"name": "response", "strict": True, "schema": schema},
@@ -586,8 +632,78 @@ def _chat_openrouter(backend: Backend, system: str, user: str, schema: dict,
                       input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
 
 
-def _chat(backend: Backend, system: str, user: str, schema: dict,
+@functools.lru_cache(maxsize=4)
+def _anthropic_client(api_key: str) -> anthropic.Anthropic:
+    # One client (connection pool) per key for the process. The SDK retries
+    # 429/5xx/connection errors itself with backoff, like the tenacity wrapper
+    # on the OpenRouter path.
+    return anthropic.Anthropic(api_key=api_key, timeout=DEFAULT_TIMEOUT, max_retries=ANTHROPIC_MAX_RETRIES)
+
+
+def _chat_anthropic(backend: Backend, system: str, user: str | list[dict], schema: dict,
+                    repair: bool = False) -> ChatResult:
+    """Claude via the Anthropic SDK. ``output_config.format`` enforces the JSON
+    schema server-side (the counterpart of ``response_format.json_schema`` on
+    the OpenAI-compatible backends). ``user`` may be pre-built content blocks so
+    a caller can put ``cache_control`` on a large shared block (the eval judge
+    reuses one transcript across calls); the pipeline passes plain strings.
+    A ``refusal`` stop yields empty content, which fails JSON parsing and is
+    retried like any degenerate output."""
+    content = user if isinstance(user, list) else [{"type": "text", "text": user}]
+    response = _anthropic_client(backend.api_key or "").messages.create(
+        model=backend.model,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        system=system,
+        messages=[{"role": "user", "content": cast(list, content)}],
+        output_config={
+            "effort": backend.effort or ANTHROPIC_DEFAULT_EFFORT,
+            "format": {"type": "json_schema", "schema": schema},
+        },
+    )
+    usage = TokenUsage.from_anthropic(response.usage)
+    stop_reason = response.stop_reason
+    _log_llm_usage("anthropic", backend.model, usage, finish_reason=stop_reason,
+                   native_finish_reason=stop_reason)
+    if stop_reason == "refusal":
+        details = response.stop_details
+        logger.warning("llm_refusal", model=backend.model,
+                       category=getattr(details, "category", None),
+                       explanation=getattr(details, "explanation", None))
+    text = "".join(block.text for block in response.content if block.type == "text")
+    content_json = _extract_json(text)
+    if repair:
+        content_json = _repair_truncated_json(content_json)
+    return ChatResult(content=content_json, finish_reason=stop_reason, native_finish_reason=stop_reason,
+                      provider="anthropic", input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
+
+
+def _user_text(user: str | list[dict]) -> str:
+    """Flatten content blocks to one string for backends without block input."""
+    if isinstance(user, str):
+        return user
+    return "\n\n".join(block.get("text", "") for block in user)
+
+
+# Per-context observer of every chat completion (the eval harness attributes
+# token usage to the task that made the call). Unset in production.
+chat_observer: contextvars.ContextVar[Callable[[ChatResult], None] | None] = contextvars.ContextVar(
+    "chat_observer", default=None)
+
+
+def _chat(backend: Backend, system: str, user: str | list[dict], schema: dict,
           repair: bool = False, ignore_providers: list[str] | None = None) -> ChatResult:
+    result = _dispatch_chat(backend, system, user, schema, repair, ignore_providers)
+    observer = chat_observer.get()
+    if observer is not None:
+        observer(result)
+    return result
+
+
+def _dispatch_chat(backend: Backend, system: str, user: str | list[dict], schema: dict,
+                   repair: bool, ignore_providers: list[str] | None) -> ChatResult:
+    if backend.name == "anthropic":
+        return _chat_anthropic(backend, system, user, schema, repair)
+    user = _user_text(user)
     if backend.name == "vllm":
         return _chat_vllm(backend, system, user, schema, repair)
     if backend.name == "openrouter":
@@ -757,6 +873,23 @@ def _is_teaser_chapter(chapter: "Chapter") -> bool:
     return "teaser" in title or "cold open" in title or "cold-open" in title
 
 
+def _check_chapter_detail(m: "Summary", slice_text: str) -> "Summary":
+    """Content check for one chapter writeup, relative to the slice it covers."""
+    s = m.summary.strip()
+    if not _ends_terminally(s):
+        raise DegenerateOutputError("chapter_detail", "stub or mid-sentence cut", output_chars=len(s))
+    if len(slice_text) > _SUBSTANTIAL_SLICE_CHARS and len(s) < _MIN_CHAPTER_DETAIL_CHARS:
+        raise DegenerateOutputError(
+            "chapter_detail", f"thin ({len(s)} chars) for a substantial chapter", output_chars=len(s))
+    return m
+
+
+def chapter_slice(chapters: list["Chapter"], i: int, named_transcript: str) -> str:
+    """The transcript slice chapter ``i`` covers (empty for a malformed stamp)."""
+    start, end = chapter_window(chapters, i)
+    return _slice_transcript_by_chapter(named_transcript, start, end)
+
+
 def _enrich_one_chapter(backend: Backend, speaker_key: str, chapter: "Chapter", slice_text: str) -> str:
     user = (
         f"CHAPTER TITLE: {chapter.title}\n\n"
@@ -764,16 +897,8 @@ def _enrich_one_chapter(backend: Backend, speaker_key: str, chapter: "Chapter", 
         f"TRANSCRIPT SEGMENT FOR THIS CHAPTER:\n{slice_text}"
     )
 
-    def check(m: "Summary") -> "Summary":
-        s = m.summary.strip()
-        if not _ends_terminally(s):
-            raise DegenerateOutputError("chapter_detail", "stub or mid-sentence cut", output_chars=len(s))
-        if len(slice_text) > _SUBSTANTIAL_SLICE_CHARS and len(s) < _MIN_CHAPTER_DETAIL_CHARS:
-            raise DegenerateOutputError(
-                "chapter_detail", f"thin ({len(s)} chars) for a substantial chapter", output_chars=len(s))
-        return m
-
-    model, passed = _chat_checked(backend, CHAPTER_DETAIL_PROMPT, user, Summary, check,
+    model, passed = _chat_checked(backend, CHAPTER_DETAIL_PROMPT, user, Summary,
+                                  lambda m: _check_chapter_detail(m, slice_text),
                                   prefer=lambda m: len(m.summary))
     if passed and model is not None:
         return model.summary
@@ -807,8 +932,7 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
         with structlog.contextvars.bound_contextvars(**log_context):
             if _is_teaser_chapter(chapters[i]):
                 return i, chapters[i].summary
-            start, end = chapter_window(chapters, i)
-            slice_text = _slice_transcript_by_chapter(named_transcript, start, end)
+            slice_text = chapter_slice(chapters, i, named_transcript)
             if not slice_text:
                 return i, chapters[i].summary
             try:
@@ -831,6 +955,35 @@ def enrich_chapters(chapters: list["Chapter"], named_transcript: str,
     return chapters
 
 
+def write_summary(named_transcript: str, backend: Backend, notes_prefix: str = "") -> str:
+    """The episode-summary pass over a speaker-named transcript."""
+    return _checked_or_fail(
+        Summary, backend, SUMMARY_PROMPT,
+        f"Summarize this transcript:\n\n{notes_prefix}{named_transcript}",
+        _check_summary,
+    ).summary
+
+
+def generate_chapters(named_transcript: str, backend: Backend, transcript_end: int,
+                      notes_prefix: str = "") -> list[Chapter]:
+    """The chapters pass (short per-chapter summaries; see enrich_chapters)."""
+    return _checked_or_fail(
+        ChapterList, backend, CHAPTERS_PROMPT,
+        f"Generate chapters for this transcript:\n\n{notes_prefix}{named_transcript}",
+        lambda m: _check_chapters(m, transcript_end),
+    ).chapters
+
+
+def generate_highlights(named_transcript: str, backend: Backend, transcript_end: int,
+                        notes_prefix: str = "") -> list[Highlight]:
+    """The highlights pass."""
+    return _checked_or_fail(
+        HighlightList, backend, HIGHLIGHTS_PROMPT,
+        f"Extract highlights from this transcript:\n\n{notes_prefix}{named_transcript}",
+        lambda m: _check_highlights(m, transcript_end),
+    ).highlights
+
+
 def summarize(transcript: str, backend: Backend | None = None,
               show_notes: str | None = None,
               podcast_description: str | None = None) -> PodcastSummary:
@@ -843,12 +996,7 @@ def summarize(transcript: str, backend: Backend | None = None,
 
     notes_prefix = _build_context_prefix(podcast_description, show_notes)
 
-    summary = _step(
-        "summary", _checked_or_fail,
-        Summary, backend, SUMMARY_PROMPT,
-        f"Summarize this transcript:\n\n{notes_prefix}{named_transcript}",
-        _check_summary,
-    ).summary
+    summary = _step("summary", write_summary, named_transcript, backend, notes_prefix)
 
     transcript_end = usable_timeline_end(named_transcript)
     if transcript_end is None:
@@ -862,21 +1010,11 @@ def summarize(transcript: str, backend: Backend | None = None,
                        transcript_chars=len(named_transcript))
         return PodcastSummary(summary=summary, speakers=speakers, chapters=[], highlights=[])
 
-    chapters = _step(
-        "chapters", _checked_or_fail,
-        ChapterList, backend, CHAPTERS_PROMPT,
-        f"Generate chapters for this transcript:\n\n{notes_prefix}{named_transcript}",
-        lambda m: _check_chapters(m, transcript_end),
-    ).chapters
+    chapters = _step("chapters", generate_chapters, named_transcript, backend, transcript_end, notes_prefix)
 
     chapters = _step("chapter_detail", enrich_chapters, chapters, named_transcript, speakers, backend)
 
-    highlights = _step(
-        "highlights", _checked_or_fail,
-        HighlightList, backend, HIGHLIGHTS_PROMPT,
-        f"Extract highlights from this transcript:\n\n{notes_prefix}{named_transcript}",
-        lambda m: _check_highlights(m, transcript_end),
-    ).highlights
+    highlights = _step("highlights", generate_highlights, named_transcript, backend, transcript_end, notes_prefix)
 
     # A PASSING chapters check always yields >= 2 chapters, so < 2 here means
     # the pass failed on every attempt and salvage kept at most a fragment —
