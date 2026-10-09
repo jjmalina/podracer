@@ -55,8 +55,8 @@ python -m podracer.evals compare eval/runs/summary/*
 ```
 
 Useful flags: `--reps N` (default 3), `--ids 1,2,3` (subset of the manifest),
-`--chapters-per-episode K` (chapter_detail: evenly spaced sample to bound
-cost), `--no-judge` (structural metrics only, free), `--judge-model claude-opus-5-5`
+`--chapters-per-episode K` (chapter_detail: evenly spaced sample, default 3;
+`0` judges every chapter, about 18 per episode), `--no-judge` (structural metrics only, free), `--judge-model claude-opus-5-5`
 (a stronger judge at twice the price; `PODRACER_EVAL_JUDGE_MODEL` sets the
 default), `--judge-backend
 openrouter --judge-model <model>` (a non-Anthropic judge, to check for

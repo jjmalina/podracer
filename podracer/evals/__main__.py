@@ -73,7 +73,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                        / f"{_slug(backend)}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}")
     cfg = RunConfig(
         eval=args.eval, backend=backend, judge=judge, dataset=args.dataset, out=out, reps=args.reps,
-        ids=_ids(args.ids), chapters_per_episode=args.chapters_per_episode, workers=args.workers,
+        ids=_ids(args.ids), chapters_per_episode=args.chapters_per_episode or None, workers=args.workers,
         label=args.label,
     )
     run(cfg)
@@ -143,8 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-judge", action="store_true", help="structural metrics only (free)")
     p.add_argument("--reps", type=int, default=3, help="runs per episode (default 3)")
     p.add_argument("--ids", default=None, help="comma-separated episode ids (default: whole manifest)")
-    p.add_argument("--chapters-per-episode", type=int, default=None,
-                   help="chapter_detail only: cap chapters per episode (evenly spaced)")
+    p.add_argument("--chapters-per-episode", type=int, default=3,
+                   help="chapter_detail only: evenly spaced chapters per episode (default 3; 0 = all, "
+                        "which is ~18 per episode and 6x the judge bill)")
     p.add_argument("--workers", type=int, default=2, help="concurrent (episode, rep) tasks")
     p.add_argument("--out", type=Path, default=None, help="run dir (default: <dataset>/runs/<eval>/<model>-<ts>)")
     p.add_argument("--label", default=None, help="free-text note stored in meta.json")
