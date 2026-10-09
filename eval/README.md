@@ -37,7 +37,42 @@ until you correct it by hand, the labels metrics measure agreement with prod
 (i.e. with whatever model produced it), not correctness. The judge score does
 not depend on the labels.
 
-## Running
+## Keeping the dataset outside the repo
+
+`pack` zips the manifest and the fetched case files; `matrix --cases` unpacks
+such a zip before running. The zip has the same content restrictions as
+`eval/data/` (it is gitignored under `eval/`), so keep it somewhere private:
+
+```bash
+python -m podracer.evals pack --out ~/podracer-eval/cases-$(date +%F).zip
+```
+
+## Running everything at once
+
+`matrix` runs every eval for every model with one judge, in parallel, then
+writes two reports: the full one (outputs, issues, rationales; private) under
+`eval/runs/`, and a **redacted** one (scores only) under `eval/reports/`, which
+is committed as the record of how the models compared at that point in time.
+
+```bash
+python -m podracer.evals matrix --cases ~/podracer-eval/cases-2026-10-09.zip \
+    --model anthropic:claude-haiku-5-5:low \
+    --model anthropic:claude-sonnet-5-5:low \
+    --model openrouter:deepseek/deepseek-v4-flash --providers deepinfra,digitalocean,parasail,venice,gmicloud,azure \
+    --judge anthropic:claude-opus-5-5:medium \
+    --slug haiku-sonnet-deepseek-opus-judge --title "Haiku 5.5 vs Sonnet 5.5 vs DeepSeek V4 Flash"
+```
+
+Model specs are `backend:model[:effort]`. `--dry-run` prints the plan and a
+rough judge-cost upper bound without calling anything; `--evals`, `--ids`,
+`--reps` narrow it. The 2026-10-09 three-model run cost about $145 at list
+price (judge ≈ $40 per model on Opus 5.5, Sonnet generation ≈ $18), so check
+the estimate before a full run. Use the same judge for every run you intend
+to compare; scores from different judges are not on the same scale.
+
+Reports so far: see `reports/`.
+
+## Running one eval
 
 API keys come from env vars (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`), falling
 back to the usual `config.toml` / `.credentials/` resolution.
@@ -52,6 +87,9 @@ python -m podracer.evals run --eval summary --backend openrouter --model deepsee
 
 # Compare every summary run side by side (add --by-episode to see where they differ)
 python -m podracer.evals compare eval/runs/summary/*
+
+# Read the outputs side by side (--redact for the scores-only version that can be committed)
+python -m podracer.evals report eval/runs/summary/* eval/runs/chapters/* --out eval/runs/report.html
 ```
 
 Useful flags: `--reps N` (default 3), `--ids 1,2,3` (subset of the manifest),

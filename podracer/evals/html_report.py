@@ -8,6 +8,7 @@ episode titles and generated text about real episodes).
 """
 import html
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from podracer.evals.judge import JUDGE_SYSTEM, RUBRICS
@@ -106,7 +107,7 @@ def _summary_table(summaries: list[dict]) -> str:
     return f"<table class='sum'><thead><tr>{th}</tr></thead><tbody>{tr}</tbody></table>"
 
 
-def _col(summary: dict, row: dict | None, out: dict | None) -> str:
+def _col(summary: dict, row: dict | None, out: dict | None, redact: bool = False) -> str:
     model = _e(summary["model"]) + (f" <span class='dim'>({_e(summary['effort'])})</span>" if summary["effort"] else "")
     if row is None:
         return (f"<div class='col'><div class='hdr'><span class='model'>{model}</span></div>"
@@ -133,8 +134,13 @@ def _col(summary: dict, row: dict | None, out: dict | None) -> str:
         f"<span class='score'>{_e(overall) if overall is not None else '-'}</span></span></div>",
         f"<div class='dims'>{dims}</div>" if dims else "",
         f"<div class='meta'>{_e(struct)} · {row.get('latency_s', 0):.0f}s</div>",
-        f"<div class='out'>{_e(text)}</div>",
     ]
+    if redact:
+        # Scores only: the output, the judge's issues and its rationale all quote
+        # the transcript, and this variant is the one that gets committed.
+        parts.append(f"<div class='meta'>{len(issues)} issue(s) flagged · {len(text)} chars</div></div>")
+        return "".join(parts)
+    parts.append(f"<div class='out'>{_e(text)}</div>")
     if issues:
         parts.append("<ul class='issues'>" + "".join(f"<li>{_e(i)}</li>" for i in issues) + "</ul>")
     if rationales:
@@ -190,18 +196,25 @@ def _rubric(ev: str) -> str:
     return f"<details class='rubric'><summary>rubric: what each dimension grades</summary><dl>{dl}</dl></details>"
 
 
-def build_html(run_dirs: list[Path], dataset: Path, title: str = "podracer eval report") -> str:
+def build_html(run_dirs: list[Path], dataset: Path, title: str = "podracer eval report",
+               redact: bool = False) -> str:
+    """redact=True drops everything quoted from the episodes (titles, outputs, judge
+    issues and rationales) and keeps the scores, so the page can be committed."""
     summaries = [summarize_run(d) for d in run_dirs]
     metas = [load_meta(d) for d in run_dirs]
     rows_by_run = [{(r["episode_id"], r["rep"], r.get("item") or ""): r for r in load_rows(d)} for d in run_dirs]
     outs_by_run = [_load_outputs(d) for d in run_dirs]
-    titles = _episode_titles(dataset)
+    titles = {} if redact else _episode_titles(dataset)
     evals: list[str] = []
     for s in summaries:
         if s["eval"] and s["eval"] not in evals:
             evals.append(s["eval"])
 
-    body = [f"<h1>{_e(title)}</h1>",
+    revs = sorted({m.get("git_rev") or "?" for m in metas})
+    stamp = f"generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')} UTC · code rev {', '.join(revs)}"
+    if redact:
+        stamp += " · redacted: scores only, no episode text"
+    body = [f"<h1>{_e(title)}</h1>", f"<p class='meta'>{_e(stamp)}</p>",
             "<h2>overall</h2>", _overall_table(summaries, evals),
             "<details class='rubric'><summary>judge instructions and scoring scale</summary>"
             f"<pre>{_e(JUDGE_SYSTEM)}</pre></details>"]
@@ -234,11 +247,11 @@ def build_html(run_dirs: list[Path], dataset: Path, title: str = "podracer eval 
                 _, rep, item = key
                 label = f"rep {rep}" + (f" · chapter {item}" if item else "")
                 o = next((outs_by_run[i].get(key) for i in idx if key in outs_by_run[i]), None)
-                if o and o.get("chapter_title"):
+                if o and o.get("chapter_title") and not redact:
                     label += f" · [{_e(o.get('timestamp'))}] {_e(o['chapter_title'])}"
                 body.append(f"<h3>{label}</h3><div class='cols'>")
                 for i in idx:
-                    body.append(_col(summaries[i], rows_by_run[i].get(key), outs_by_run[i].get(key)))
+                    body.append(_col(summaries[i], rows_by_run[i].get(key), outs_by_run[i].get(key), redact))
                 body.append("</div>")
             body.append("</div></details>")
     return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"

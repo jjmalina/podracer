@@ -8,8 +8,13 @@ Layout (``--dataset`` root, default ``eval/``)::
     eval/data/<id>/case.json      gitignored: transcript, show notes, description, prod summary
     eval/data/<id>/labels.json    gitignored: hand-corrected speaker names (seeded from prod)
     eval/runs/...                 gitignored: run outputs
+    eval/reports/<date>-*.html    committed: redacted reports (scores only, no transcript text)
+
+``pack`` zips the manifest and case files so the dataset can be kept outside
+the repo and handed to ``matrix --cases``; ``unpack`` is the inverse.
 """
 import json
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -112,3 +117,45 @@ def load_dataset(root: Path = DEFAULT_DATASET, ids: list[int] | None = None) -> 
         if missing:
             raise ValueError(f"episode ids not in manifest: {sorted(missing)}")
     return [load_case(root, e) for e in entries]
+
+
+CASE_FILES = ("case.json", "labels.json")
+
+
+def pack_cases(root: Path, zip_path: Path) -> list[int]:
+    """Zip manifest.json plus every manifest episode's case files into zip_path."""
+    entries = load_manifest(root)
+    packed: list[int] = []
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(manifest_path(root), "manifest.json")
+        for e in entries:
+            episode_id = int(e["id"])
+            d = case_dir(root, episode_id)
+            if not (d / "case.json").exists():
+                raise FileNotFoundError(f"{d / 'case.json'} missing — fetch it before packing")
+            for name in CASE_FILES:
+                if (d / name).exists():
+                    zf.write(d / name, f"data/{episode_id}/{name}")
+            packed.append(episode_id)
+    return packed
+
+
+def unpack_cases(zip_path: Path, root: Path, *, manifest: bool = True) -> list[int]:
+    """Extract a pack into root (data/<id>/...; the manifest too unless told not to).
+    Only the expected member names are extracted, so a foreign zip cannot write
+    outside root."""
+    ids: set[int] = set()
+    with zipfile.ZipFile(zip_path) as zf:
+        for member in zf.namelist():
+            parts = member.split("/")
+            if member == "manifest.json":
+                if manifest:
+                    manifest_path(root).parent.mkdir(parents=True, exist_ok=True)
+                    manifest_path(root).write_bytes(zf.read(member))
+                continue
+            if len(parts) == 3 and parts[0] == "data" and parts[1].isdigit() and parts[2] in CASE_FILES:
+                d = case_dir(root, int(parts[1]))
+                d.mkdir(parents=True, exist_ok=True)
+                (d / parts[2]).write_bytes(zf.read(member))
+                ids.add(int(parts[1]))
+    return sorted(ids)
