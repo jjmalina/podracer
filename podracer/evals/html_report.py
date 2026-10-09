@@ -10,6 +10,7 @@ import html
 import json
 from pathlib import Path
 
+from podracer.evals.judge import JUDGE_SYSTEM, RUBRICS
 from podracer.evals.report import load_meta, load_rows, summarize_run
 
 _CSS = """
@@ -45,6 +46,12 @@ details.rat summary { color:var(--dim); cursor:pointer; }
 .rat dl { margin:4px 0; } .rat dt { color:var(--accent); } .rat dd { margin:0 0 4px 0; }
 .err { color:var(--bad); } .pass { color:var(--good); } .fail { color:var(--bad); }
 .meta { color:var(--dim); font-size:12px; }
+table.overall td.best { color:var(--accent); font-weight:600; }
+details.rubric { margin:4px 0 12px; font-size:13px; }
+details.rubric summary { color:var(--dim); cursor:pointer; }
+details.rubric dl { margin:6px 0 0; max-width:80em; } details.rubric dt { color:var(--accent); margin-top:4px; }
+details.rubric dd { margin:0; color:var(--fg); }
+details.rubric pre { white-space:pre-wrap; max-width:80em; color:var(--fg); font:inherit; margin:6px 0 0; }
 .top { display:flex; gap:16px; flex-wrap:wrap; align-items:baseline; }
 """
 
@@ -137,6 +144,52 @@ def _col(summary: dict, row: dict | None, out: dict | None) -> str:
     return "".join(parts)
 
 
+def _model_label(s: dict) -> str:
+    return s["model"] + (f" ({s['effort']})" if s["effort"] else "")
+
+
+def _overall_table(summaries: list[dict], evals: list[str]) -> str:
+    """Evals as rows, models as columns, overall mean ± 95% CI (n); best per row highlighted."""
+    models: list[str] = []
+    for s in summaries:
+        if _model_label(s) not in models:
+            models.append(_model_label(s))
+    head = "".join(f"<th>{_e(m)}</th>" for m in models)
+    body = []
+    notes = []
+    for ev in evals:
+        cells = []
+        by_model = {_model_label(s): s["overall"] for s in summaries if s["eval"] == ev}
+        if len({v["n"] for v in by_model.values()}) > 1:
+            notes.append(ev)
+        means = [v["mean"] for v in by_model.values() if v["mean"] is not None]
+        best = max(means) if means else None
+        for m in models:
+            ov = by_model.get(m)
+            if not ov or ov["mean"] is None:
+                cells.append("<td>-</td>")
+                continue
+            ci = f" ± {ov['ci95']:.2f}" if ov["ci95"] is not None else ""
+            cls = " class='best'" if ov["mean"] == best and len(means) > 1 else ""
+            cells.append(f"<td{cls}>{ov['mean']:.2f}{ci} <span class='meta'>(n={ov['n']})</span></td>")
+        mark = " *" if ev in notes else ""
+        body.append(f"<tr><td>{_e(ev)}{mark}</td>{''.join(cells)}</tr>")
+    foot = ""
+    if notes:
+        foot = ("<p class='meta'>* item counts differ between runs (different chapter sample or an unfinished "
+                "run), so these scores are not over the same items.</p>")
+    return (f"<table class='sum overall'><thead><tr><th>eval</th>{head}</tr></thead>"
+            f"<tbody>{''.join(body)}</tbody></table>{foot}")
+
+
+def _rubric(ev: str) -> str:
+    rubric = RUBRICS.get(ev)
+    if not rubric:
+        return ""
+    dl = "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in rubric.items())
+    return f"<details class='rubric'><summary>rubric: what each dimension grades</summary><dl>{dl}</dl></details>"
+
+
 def build_html(run_dirs: list[Path], dataset: Path, title: str = "podracer eval report") -> str:
     summaries = [summarize_run(d) for d in run_dirs]
     metas = [load_meta(d) for d in run_dirs]
@@ -148,11 +201,15 @@ def build_html(run_dirs: list[Path], dataset: Path, title: str = "podracer eval 
         if s["eval"] and s["eval"] not in evals:
             evals.append(s["eval"])
 
-    body = [f"<h1>{_e(title)}</h1>"]
+    body = [f"<h1>{_e(title)}</h1>",
+            "<h2>overall</h2>", _overall_table(summaries, evals),
+            "<details class='rubric'><summary>judge instructions and scoring scale</summary>"
+            f"<pre>{_e(JUDGE_SYSTEM)}</pre></details>"]
     for ev in evals:
         idx = [i for i, s in enumerate(summaries) if s["eval"] == ev]
         body.append(f"<h2>{_e(ev)}</h2>")
         body.append(_summary_table([summaries[i] for i in idx]))
+        body.append(_rubric(ev))
         judges = {(metas[i].get("judge") or {}).get("model") for i in idx}
         if len(judges) > 1:
             names = ", ".join(map(str, judges))
