@@ -105,9 +105,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def _estimate_judge_usd(dataset: Path, evals: list[str], n_models: int, reps: int, judge: Backend,
                         chapters_per_episode: int) -> float | None:
-    """Rough upper bound before spending: the judge reads the whole transcript once
-    per item (~3.5 chars/token for labelled, timestamped transcripts) and writes
-    ~1.5K tokens; chapter_detail reads a slice. Calibrated on the 2026-10-09 runs."""
+    """Rough upper bound before spending, calibrated on the 2026-10-09 runs: a
+    full-transcript judge prompt is ~2.2 transcript chars per input token (the
+    transcript plus instructions, candidate and show notes) and the verdict
+    ~1.7K tokens; a chapter_detail item is ~4K in / ~1K out."""
     price = PRICES_PER_MTOK.get(judge.model)
     if price is None:
         return None
@@ -116,10 +117,10 @@ def _estimate_judge_usd(dataset: Path, evals: list[str], n_models: int, reps: in
     for ev in evals:
         for case in cases:
             if ev == "chapter_detail":
-                items, chars = chapters_per_episode, len(case.transcript) / 15
+                items, in_tok, out_tok = chapters_per_episode, len(case.transcript) / 22, 1000
             else:
-                items, chars = 1, len(case.transcript)
-            total += items * ((chars / 3.5) * price[0] + 1500 * price[1]) / 1e6
+                items, in_tok, out_tok = 1, len(case.transcript) / 2.2, 1700
+            total += items * (in_tok * price[0] + out_tok * price[1]) / 1e6
     return total * reps * n_models
 
 
