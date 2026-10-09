@@ -9,8 +9,9 @@ import pytest
 from podracer import config as config_mod
 from podracer import summarize
 from podracer.config import load_config
+from podracer.models import ChapterList
 from podracer.process import _build_summarize_backend
-from podracer.summarize import Backend, _chat, _chat_anthropic, validate_effort
+from podracer.summarize import Backend, _anthropic_schema, _chat, _chat_anthropic, validate_effort
 
 from .test_llm_token_logging import _capture_json_logs, _llm_call
 
@@ -51,11 +52,23 @@ def test_request_shape_enforces_schema_and_effort(monkeypatch):
     assert call["messages"] == [{"role": "user", "content": [{"type": "text", "text": "user text"}]}]
     assert call["output_config"] == {
         "effort": "medium",
-        "format": {"type": "json_schema", "schema": schema},
+        "format": {"type": "json_schema",
+                   "schema": {**schema, "additionalProperties": False}},
     }
     assert json.loads(result.content) == {"summary": "ok."}
     assert result.finish_reason == "end_turn"
     assert result.provider == "anthropic"
+
+
+def test_pydantic_schemas_are_closed_for_the_structured_output_grammar():
+    # The API rejects any object schema without additionalProperties: false,
+    # including the nested ones pydantic puts under $defs. Nothing else changes.
+    schema = ChapterList.model_json_schema()
+    closed = _anthropic_schema(schema)
+    assert closed["additionalProperties"] is False
+    assert closed["$defs"]["Chapter"]["additionalProperties"] is False
+    assert closed["$defs"]["Chapter"]["required"] == schema["$defs"]["Chapter"]["required"]
+    assert "additionalProperties" not in schema  # input untouched
 
 
 def test_prebuilt_content_blocks_pass_through(monkeypatch):

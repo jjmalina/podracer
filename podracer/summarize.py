@@ -640,6 +640,23 @@ def _anthropic_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key, timeout=DEFAULT_TIMEOUT, max_retries=ANTHROPIC_MAX_RETRIES)
 
 
+def _anthropic_schema(schema: dict) -> dict:
+    """The Messages API's structured-output grammar requires every object
+    schema to say ``additionalProperties: false`` (pydantic's
+    ``model_json_schema()`` leaves it out). Returns a deep copy with it set on
+    every object, including those under ``$defs``; nothing else is touched."""
+    def walk(node):
+        if isinstance(node, dict):
+            out = {k: walk(v) for k, v in node.items()}
+            if out.get("type") == "object" and "properties" in out:
+                out["additionalProperties"] = False
+            return out
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
+    return walk(schema)
+
+
 def _chat_anthropic(backend: Backend, system: str, user: str | list[dict], schema: dict,
                     repair: bool = False) -> ChatResult:
     """Claude via the Anthropic SDK. ``output_config.format`` enforces the JSON
@@ -657,7 +674,7 @@ def _chat_anthropic(backend: Backend, system: str, user: str | list[dict], schem
         messages=[{"role": "user", "content": cast(list, content)}],
         output_config={
             "effort": backend.effort or ANTHROPIC_DEFAULT_EFFORT,
-            "format": {"type": "json_schema", "schema": schema},
+            "format": {"type": "json_schema", "schema": _anthropic_schema(schema)},
         },
     )
     usage = TokenUsage.from_anthropic(response.usage)
