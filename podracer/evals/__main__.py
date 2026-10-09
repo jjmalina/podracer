@@ -13,12 +13,15 @@ from podracer.config import load_config
 from podracer.evals import EVALS
 from podracer.evals.dataset import DEFAULT_DATASET
 from podracer.evals.fetch import fetch
+from podracer.evals.html_report import build_html
 from podracer.evals.report import compare_text, summarize_run
 from podracer.evals.runner import RunConfig, run
 from podracer.summarize import ANTHROPIC_DEFAULT_EFFORT, Backend
 
 BACKENDS = ("anthropic", "openrouter", "ollama", "vllm")
-DEFAULT_JUDGE_MODEL = "claude-opus-5-5"
+# Sonnet 5.5 is half the price of Opus 5.5 per token and the judge dominates run
+# cost. Override per run with --judge-model, or for a shell with the env var.
+DEFAULT_JUDGE_MODEL = os.environ.get("PODRACER_EVAL_JUDGE_MODEL", "claude-sonnet-5-5")
 
 
 def build_backend(name: str, model: str, *, effort: str | None = None, providers: str | None = None,
@@ -96,6 +99,17 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    dirs = [Path(d) for d in args.runs]
+    missing = [d for d in dirs if not (d / "results.jsonl").exists()]
+    if missing:
+        raise SystemExit(f"no results.jsonl in: {', '.join(map(str, missing))}")
+    out = args.out or (args.dataset / "runs" / "report.html")
+    out.write_text(build_html(dirs, args.dataset, title=args.title))
+    print(json.dumps({"report": str(out)}) if args.json else f"wrote {out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m podracer.evals",
                                      description="Model evals for podracer's per-episode LLM prompts")
@@ -121,7 +135,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--providers", default=None, help="openrouter only: comma-separated provider allowlist")
     p.add_argument("--base-url", default=None, help="ollama/vllm base URL")
     p.add_argument("--judge-backend", default="anthropic", choices=BACKENDS)
-    p.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
+    p.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL,
+                   help=f"judge model (default: $PODRACER_EVAL_JUDGE_MODEL or {DEFAULT_JUDGE_MODEL})")
     p.add_argument("--judge-effort", default="medium")
     p.add_argument("--judge-providers", default=None)
     p.add_argument("--judge-base-url", default=None)
@@ -139,6 +154,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("runs", nargs="+")
     p.add_argument("--by-episode", action="store_true", help="also show overall per episode")
     p.set_defaults(func=cmd_compare)
+
+    p = sub.add_parser("report", help="self-contained HTML page: outputs of several runs side by side")
+    p.add_argument("runs", nargs="+")
+    p.add_argument("--out", type=Path, default=None, help="output file (default: <dataset>/runs/report.html)")
+    p.add_argument("--title", default="podracer eval report")
+    p.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
     logging_config.configure_logging(level=logging.INFO if args.verbose else logging.WARNING)

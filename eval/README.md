@@ -43,7 +43,7 @@ API keys come from env vars (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`), falling
 back to the usual `config.toml` / `.credentials/` resolution.
 
 ```bash
-# Haiku 5.5 on the summary prompt, 3 runs per episode, judged by Opus 5.5
+# Haiku 5.5 on the summary prompt, 3 runs per episode, judged by Sonnet 5.5 (the default)
 python -m podracer.evals run --eval summary --backend anthropic --model claude-haiku-5-5 --effort low
 
 # The incumbent, same eval, same judge, with the prod provider allowlist
@@ -56,7 +56,9 @@ python -m podracer.evals compare eval/runs/summary/*
 
 Useful flags: `--reps N` (default 3), `--ids 1,2,3` (subset of the manifest),
 `--chapters-per-episode K` (chapter_detail: evenly spaced sample to bound
-cost), `--no-judge` (structural metrics only, free), `--judge-backend
+cost), `--no-judge` (structural metrics only, free), `--judge-model claude-opus-5-5`
+(a stronger judge at twice the price; `PODRACER_EVAL_JUDGE_MODEL` sets the
+default), `--judge-backend
 openrouter --judge-model <model>` (a non-Anthropic judge, to check for
 same-family bias when grading Claude), `--workers N`, `--json`.
 
@@ -81,7 +83,7 @@ writeup length vs slice length. Error rate and failure class (degenerate
 output after retries, provider policy, HTTP) are first-class metrics: the
 incumbent's known failure mode is transient degenerate output.
 
-**Judge (LLM, pointwise 1-5 per dimension).** Rubrics are in
+**Judge (LLM, pointwise 1-5 per dimension, Sonnet 5.5 by default).** Rubrics are in
 `podracer/evals/judge.py`, derived from each prompt's own instructions. The
 judge sees the exact source the model saw, the model's instructions, and the
 output; it grades against the source only, lists concrete issues, and gives a
@@ -98,8 +100,8 @@ table ignores cache discounts (an upper bound).
 ## Rough cost
 
 Generation is pennies per episode on either Haiku 5.5 or DeepSeek V4 Flash.
-The judge dominates: an Opus 5.5 judge reading a full transcript is roughly
-$0.20-0.50 per item, so a 14-episode × 3-rep run of one full-transcript eval is
-on the order of $10-20 before caching; `chapter_detail` judges only the
-chapter slice and is much cheaper per item. Use `--ids` and `--reps 1` to
+The judge dominates: a Sonnet 5.5 judge reading a full transcript is roughly
+$0.10-0.25 per item (Opus 5.5 is double), so a 14-episode × 3-rep run of one
+full-transcript eval is on the order of $5-10 before caching; `chapter_detail`
+judges only the chapter slice and is much cheaper per item. Use `--ids` and `--reps 1` to
 pilot before a full run.
