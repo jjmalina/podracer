@@ -11,7 +11,8 @@ from podracer import summarize
 from podracer.config import load_config
 from podracer.models import ChapterList
 from podracer.process import _build_summarize_backend
-from podracer.summarize import Backend, _anthropic_schema, _chat, _chat_anthropic, validate_effort
+from podracer.providers import validate_effort
+from podracer.summarize import Backend, _anthropic_schema, _chat, _chat_anthropic
 
 from .test_llm_token_logging import _capture_json_logs, _llm_call
 

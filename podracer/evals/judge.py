@@ -7,14 +7,17 @@ instructions that model was given, and the candidate output, and returns one
 1-5 score per rubric dimension plus a list of concrete issues.
 
 The source block carries ``cache_control`` so repeated runs on the same
-episode (and the four full-transcript evals of one episode) reuse the cached
-transcript on the anthropic backend; other backends flatten the blocks.
+episode (and the full-transcript evals of one episode, which share a source)
+reuse the cached transcript on the anthropic backend; other backends flatten
+the blocks. A cache hit needs an identical prefix, so the system prompt is the
+same for every eval and the per-eval rubric goes in the user block *after* the
+source.
 """
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ValidationError
 
-from podracer import logger
+from podracer.evals import logger
 from podracer.summarize import Backend, ChatResult, _chat
 
 _JUDGE_ATTEMPTS = 3
@@ -137,9 +140,10 @@ def _clamp(v: int) -> int:
     return max(1, min(5, int(v)))
 
 
-def judge_blocks(source: str, instructions: str, candidate: str, dimensions: list[str]) -> list[dict]:
-    """The judge's user content: the (cacheable) source first, then the task."""
-    dims = "\n".join(f"- {d}" for d in dimensions)
+def judge_blocks(source: str, instructions: str, candidate: str, rubric: dict[str, str]) -> list[dict]:
+    """The judge's user content: the (cacheable) source first, then the task
+    and the rubric for this eval."""
+    dims = "\n".join(f"- {name}: {desc}" for name, desc in rubric.items())
     return [
         {"type": "text", "text": f"SOURCE MATERIAL:\n\n{source}", "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": (
@@ -153,13 +157,11 @@ def judge_blocks(source: str, instructions: str, candidate: str, dimensions: lis
 def judge(backend: Backend, eval_name: str, source: str, instructions: str, candidate: str) -> Judgement:
     rubric = RUBRICS[eval_name]
     dims = list(rubric)
-    system = JUDGE_SYSTEM + "\n\nDIMENSIONS FOR THIS TASK:\n" + "\n".join(
-        f"- {name}: {desc}" for name, desc in rubric.items())
-    blocks = judge_blocks(source, instructions, candidate or "(empty output)", dims)
+    blocks = judge_blocks(source, instructions, candidate or "(empty output)", rubric)
     schema = Verdict.model_json_schema()
     last: str | None = None
     for attempt in range(_JUDGE_ATTEMPTS):
-        result: ChatResult = _chat(backend, system, blocks, schema, repair=attempt == _JUDGE_ATTEMPTS - 1)
+        result: ChatResult = _chat(backend, JUDGE_SYSTEM, blocks, schema, repair=attempt == _JUDGE_ATTEMPTS - 1)
         try:
             verdict = Verdict.model_validate_json(result.content)
         except ValidationError as e:

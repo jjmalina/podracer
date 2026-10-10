@@ -63,7 +63,9 @@ python -m podracer.evals matrix --cases ~/podracer-eval/cases-2026-10-09.zip \
     --slug haiku-sonnet-deepseek-opus-judge --title "Haiku 5.5 vs Sonnet 5.5 vs DeepSeek V4 Flash"
 ```
 
-Model specs are `backend:model[:effort]`. `--dry-run` prints the plan and a
+Model specs are `backend:model[:effort]`; effort applies to anthropic and
+openrouter only, so an ollama/vllm tag such as `ollama:gemma4:e4b` is read as
+the model name. `--dry-run` prints the plan and a
 rough judge-cost upper bound without calling anything; `--evals`, `--ids`,
 `--reps` narrow it. The 2026-10-09 three-model run cost about $145 at list
 price (judge ≈ $40 per model on Opus 5.5, Sonnet generation ≈ $18), so check

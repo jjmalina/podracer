@@ -13,7 +13,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from podracer import logger
+from podracer.evals import logger
 from podracer.evals.dataset import case_dir, load_manifest, write_case
 
 DEFAULT_DB = "/var/lib/podracer/podracer.db"

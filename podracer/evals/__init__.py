@@ -14,4 +14,10 @@ runs of different models can be compared side by side.
 See eval/README.md.
 """
 
+import structlog
+
 EVALS = ("speakers", "summary", "chapters", "chapter_detail", "highlights")
+
+# The harness's own progress/warning lines. A child of "podracer" so the CLI
+# can keep them at INFO while the pipeline's INFO chatter stays at WARNING.
+logger = structlog.get_logger("podracer.evals")

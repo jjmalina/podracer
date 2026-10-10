@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
 import anthropic
 import httpx
@@ -23,10 +23,13 @@ from podracer.models import (
     SpeakerIdentification,
 )
 from podracer.providers import (
+    ANTHROPIC_DEFAULT_EFFORT,
     DENYLISTED_PROVIDERS,
+    AnthropicEffort,
     ProviderNotAllowedError,
     provider_allowed,
     validate_allowlist,
+    validate_effort,
 )
 from podracer.timestamps import (
     chapter_window,
@@ -39,14 +42,6 @@ DEFAULT_TIMEOUT = 600.0
 DEFAULT_CTX = 131072
 DEFAULT_MAX_TOKENS = 16384
 CHAPTER_DETAIL_WORKERS = 5
-# Anthropic: thinking depth for structured-output passes. Low mirrors the other
-# backends (thinking off / reasoning effort "none"): these are JSON extraction
-# passes over a transcript that is already in context, and the April-2026 model
-# comparison found no quality benefit from reasoning on them. Tunable per
-# backend (Backend.effort) so the eval harness can sweep it.
-AnthropicEffort = Literal["low", "medium", "high", "xhigh", "max"]
-ANTHROPIC_EFFORTS: tuple[AnthropicEffort, ...] = ("low", "medium", "high", "xhigh", "max")
-ANTHROPIC_DEFAULT_EFFORT: AnthropicEffort = "low"
 ANTHROPIC_MAX_RETRIES = 5
 
 # --- LLM output quality guards ---------------------------------------------
@@ -108,15 +103,6 @@ class Backend:
             api_key=api_key,
             effort=validate_effort(effort),
         )
-
-
-def validate_effort(value: object, *, where: str = "effort") -> AnthropicEffort:
-    """One boundary for the Anthropic effort setting: config, CLI flags and the
-    Backend factory all pass through here, so a typo fails at startup instead
-    of as a 400 on the first summarize job."""
-    if value in ANTHROPIC_EFFORTS:
-        return cast(AnthropicEffort, value)
-    raise ValueError(f"{where} must be one of {list(ANTHROPIC_EFFORTS)}; got {value!r}")
 
 
 SPEAKER_ID_PROMPT = """\

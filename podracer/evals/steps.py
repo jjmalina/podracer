@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from podracer.evals.dataset import EvalCase
 from podracer.models import Chapter, ChapterList, Highlight, HighlightList, SpeakerIdentification, is_ad_speaker
 from podracer.summarize import (
+    _SUBSTANTIAL_SLICE_CHARS,
     CHAPTER_DETAIL_PROMPT,
     CHAPTER_DETAIL_WORKERS,
     CHAPTERS_PROMPT,
@@ -59,6 +60,9 @@ class Item:
     structural: dict = field(default_factory=dict)
     passed: bool = True           # production content check passed on the final output
     meta: dict = field(default_factory=dict)
+    # Set when this item produced no usable output (the other items of the case
+    # are fine): the runner records it as an error row and does not judge it.
+    error: Exception | None = None
 
 
 class FrozenInputsMissing(RuntimeError):
@@ -219,12 +223,18 @@ def run_chapter_detail(backend: Backend, case: EvalCase, chapters_per_episode: i
         text = _enrich_one_chapter(backend, speaker_key, chapters[i], slice_text)
         source = (f"CHAPTER TITLE: {chapters[i].title}\n\n{speaker_key}\n\n"
                   f"TRANSCRIPT SEGMENT FOR THIS CHAPTER:\n{slice_text}")
+        # Production's fallback after exhausted retries is the chapters-pass
+        # summary, which is blank here: an empty text means every attempt was
+        # degenerate, and that is a generation failure, not an output to grade.
+        error = None if text else DegenerateOutputError(
+            "chapter_detail", "no usable writeup after retries", output_chars=0)
         return Item(
             key=f"c{i:02d}", output=text, output_text=text, source=source, instructions=CHAPTER_DETAIL_PROMPT,
             structural={"chars": len(text), "words": _words(text), "slice_chars": len(slice_text),
-                        "substantial_slice": len(slice_text) > 3000},
+                        "substantial_slice": len(slice_text) > _SUBSTANTIAL_SLICE_CHARS},
             passed=bool(text) and _passes(lambda m: _check_chapter_detail(m, slice_text), Summary(summary=text)),
             meta={"chapter_index": i, "chapter_title": chapters[i].title, "timestamp": chapters[i].timestamp},
+            error=error,
         )
 
     # Same fan-out as production. Copy the caller's context once per task (a

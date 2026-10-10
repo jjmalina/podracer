@@ -25,7 +25,8 @@ from pathlib import Path
 
 import httpx
 
-from podracer import logger, summarize
+from podracer import summarize
+from podracer.evals import logger
 from podracer.evals.dataset import EvalCase, load_dataset
 from podracer.evals.judge import JudgeError, judge
 from podracer.evals.steps import STEPS, FrozenInputsMissing, Item, _dump
@@ -38,11 +39,14 @@ class Usage:
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    # chapter_detail's pool threads all report into one case sink.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def add(self, r: ChatResult) -> None:
-        self.calls += 1
-        self.input_tokens += r.input_tokens or 0
-        self.output_tokens += r.output_tokens or 0
+        with self._lock:
+            self.calls += 1
+            self.input_tokens += r.input_tokens or 0
+            self.output_tokens += r.output_tokens or 0
 
     def as_dict(self) -> dict:
         return {"calls": self.calls, "input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
@@ -117,6 +121,13 @@ def _run_one(cfg: RunConfig, case: EvalCase, rep: int) -> tuple[list[dict], list
     finally:
         _observe(None)
     gen_latency = time.monotonic() - t0
+    if not items:  # e.g. chapter_detail on a prod summary with no enrichable chapters
+        logger.warning("eval_case_empty", episode_id=case.episode_id, rep=rep)
+        row = {**base, "item": None, "status": "error", "failure_class": "no_items",
+               "error": "the case produced no items to grade", "latency_s": round(gen_latency, 2),
+               "gen": gen.as_dict(), "structural": {}, "passed": False, "judge": None, "overall": None,
+               "issues": []}
+        return [row], []
 
     rows: list[dict] = []
     files: list[tuple[str, dict]] = []
@@ -129,7 +140,11 @@ def _run_one(cfg: RunConfig, case: EvalCase, rep: int) -> tuple[list[dict], list
                "judge": None, "overall": None, "issues": []}
         out = {"episode_id": case.episode_id, "rep": rep, "item": item.key, "output": _dump(item.output),
                "output_text": item.output_text, "structural": item.structural, "passed": item.passed, **item.meta}
-        if cfg.judge is not None:
+        if item.error is not None:
+            row.update(status="error", failure_class=_failure_class(item.error), error=str(item.error))
+            logger.warning("eval_item_failed", episode_id=case.episode_id, rep=rep, item=item.key,
+                           error=str(item.error), failure_class=row["failure_class"])
+        elif cfg.judge is not None:
             jud = Usage()
             _observe(jud)
             t1 = time.monotonic()
@@ -171,7 +186,9 @@ def run(cfg: RunConfig) -> Path:
     results_path = cfg.out / "results.jsonl"
     results_path.write_text("")
     write_lock = threading.Lock()
-    tasks = [(case, rep) for rep in range(cfg.reps) for case in cases]
+    # Case-major so the reps of one episode run back to back and the judge's
+    # cached transcript prefix is still warm for them.
+    tasks = [(case, rep) for case in cases for rep in range(cfg.reps)]
     logger.info("eval_run_start", eval=cfg.eval, model=cfg.backend.model, cases=len(cases), reps=cfg.reps,
                 judge=cfg.judge.model if cfg.judge else None, out=str(cfg.out))
 

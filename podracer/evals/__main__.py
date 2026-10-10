@@ -9,17 +9,19 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
-from podracer import logger, logging_config
+from podracer import logging_config
 from podracer.config import load_config
-from podracer.evals import EVALS
+from podracer.evals import EVALS, logger
 from podracer.evals.dataset import DEFAULT_DATASET, load_dataset, pack_cases, unpack_cases
 from podracer.evals.fetch import fetch
 from podracer.evals.html_report import build_html
 from podracer.evals.report import PRICES_PER_MTOK, compare_text, summarize_run
 from podracer.evals.runner import RunConfig, run
-from podracer.summarize import ANTHROPIC_DEFAULT_EFFORT, Backend
+from podracer.providers import ANTHROPIC_DEFAULT_EFFORT, ANTHROPIC_EFFORTS
+from podracer.summarize import Backend
 
 BACKENDS = ("anthropic", "openrouter", "ollama", "vllm")
+EFFORT_BACKENDS = ("anthropic", "openrouter")  # the others have no effort setting
 # Sonnet 5.5 is half the price of Opus 5.5 per token and the judge dominates run
 # cost. Override per run with --judge-model, or for a shell with the env var.
 DEFAULT_JUDGE_MODEL = os.environ.get("PODRACER_EVAL_JUDGE_MODEL", "claude-sonnet-5-5")
@@ -64,11 +66,18 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def _parse_spec(spec: str) -> tuple[str, str, str | None]:
-    """``backend:model[:effort]`` → (backend, model, effort). Model names may contain '/'."""
-    parts = spec.split(":")
-    if len(parts) < 2 or parts[0] not in BACKENDS:
+    """``backend:model[:effort]`` → (backend, model, effort). Model names may
+    contain '/' and, for ollama/vllm, ':' (``ollama:gemma4:e4b`` is a tag, not
+    an effort); only anthropic/openrouter take a trailing effort."""
+    backend, _, rest = spec.partition(":")
+    if backend not in BACKENDS or not rest:
         raise SystemExit(f"bad model spec {spec!r}: want backend:model[:effort], backend in {BACKENDS}")
-    return parts[0], parts[1], (parts[2] if len(parts) > 2 and parts[2] else None)
+    if backend not in EFFORT_BACKENDS or ":" not in rest:
+        return backend, rest, None
+    model, _, effort = rest.rpartition(":")
+    if effort not in ANTHROPIC_EFFORTS:
+        raise SystemExit(f"bad model spec {spec!r}: effort must be one of {list(ANTHROPIC_EFFORTS)}")
+    return backend, model, effort
 
 
 def cmd_pack(args: argparse.Namespace) -> int:
@@ -117,7 +126,9 @@ def _estimate_judge_usd(dataset: Path, evals: list[str], n_models: int, reps: in
     for ev in evals:
         for case in cases:
             if ev == "chapter_detail":
-                items, in_tok, out_tok = chapters_per_episode, len(case.transcript) / 22, 1000
+                n_chapters = len(case.prod_summary.chapters) if case.prod_summary else 0
+                items = min(chapters_per_episode, n_chapters) if chapters_per_episode else n_chapters
+                in_tok, out_tok = len(case.transcript) / 22, 1000
             else:
                 items, in_tok, out_tok = 1, len(case.transcript) / 2.2, 1700
             total += items * (in_tok * price[0] + out_tok * price[1]) / 1e6
@@ -201,7 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET,
                         help="dataset root holding manifest.json, data/, runs/ (default: eval/)")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("-v", "--verbose", action="store_true", help="show the pipeline's INFO logs")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="also show the pipeline's INFO logs (every LLM call)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("fetch", help="pull manifest episodes from a deployed podracer over SSH")
@@ -274,10 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
+    # Without -v the pipeline's INFO chatter (every LLM call) stays quiet, but
+    # the harness's own progress lines (run start, each case done) still show.
     logging_config.configure_logging(level=logging.INFO if args.verbose else logging.WARNING)
-    if not args.verbose:
-        # Keep the eval's own progress lines visible.
-        logging.getLogger("podracer").setLevel(logging.WARNING)
+    logging.getLogger("podracer.evals").setLevel(logging.INFO)
     try:
         return args.func(args)
     except KeyboardInterrupt:

@@ -2,15 +2,17 @@
 structural metrics and frozen-input handling (chat layer mocked), the judge's
 parsing/validation, usage attribution, and the run -> results -> compare path."""
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from podracer import summarize
 from podracer.evals import EVALS
+from podracer.evals.__main__ import _estimate_judge_usd, _parse_spec
 from podracer.evals.dataset import load_dataset, write_case
 from podracer.evals.judge import RUBRICS, JudgeError, judge, judge_blocks
-from podracer.evals.report import compare_text, summarize_run
+from podracer.evals.report import PRICES_PER_MTOK, compare_text, summarize_run
 from podracer.evals.runner import RunConfig, Usage, run
 from podracer.evals.steps import STEPS, FrozenInputsMissing, _sample_indices
 from podracer.summarize import Backend, ChatResult
@@ -92,7 +94,8 @@ def _fake_chat(responses: dict[str, dict]):
 
 def _judge_payload(user):
     task = user[1]["text"] if isinstance(user, list) else user
-    dims = [line[2:] for line in task.splitlines() if line.startswith("- ")]
+    rubric = task.split("exactly these dimensions:\n", 1)[1]
+    dims = [line[2:].split(":", 1)[0] for line in rubric.splitlines() if line.startswith("- ")]
     return VERDICT(dims)
 
 
@@ -210,9 +213,24 @@ def test_downstream_step_needs_prod_summary(tmp_path):
 # --- judge -----------------------------------------------------------------
 
 def test_judge_blocks_cache_the_source():
-    blocks = judge_blocks("SRC", "INSTR", "CAND", ["a", "b"])
+    blocks = judge_blocks("SRC", "INSTR", "CAND", {"a": "first", "b": "second"})
     assert blocks[0]["cache_control"] == {"type": "ephemeral"} and "SRC" in blocks[0]["text"]
-    assert "- a\n- b" in blocks[1]["text"] and "CAND" in blocks[1]["text"]
+    assert "- a: first\n- b: second" in blocks[1]["text"] and "CAND" in blocks[1]["text"]
+
+
+def test_judge_system_prompt_is_the_same_for_every_eval(monkeypatch):
+    """The cached prefix (system + source block) must not vary by eval, or the
+    summary/chapters/highlights runs on one transcript never share a cache entry."""
+    systems = []
+
+    def chat(backend, system, user, schema, repair=False, ignore_providers=None):
+        systems.append(system)
+        return ChatResult(content=json.dumps(_judge_payload(user)))
+
+    monkeypatch.setattr(summarize, "_dispatch_chat", chat)
+    for ev in EVALS:
+        judge(JUDGE, ev, "src", "instr", "cand")
+    assert len(set(systems)) == 1 and "DIMENSIONS" not in systems[0]
 
 
 def test_judge_validates_dimensions_and_clamps(monkeypatch):
@@ -235,7 +253,6 @@ def test_judge_validates_dimensions_and_clamps(monkeypatch):
     assert set(v.scores) == set(RUBRICS["summary"])
     assert v.scores["faithfulness"] == 5 and v.overall == 1
     assert v.issues == ["one unsupported number"] and v.input_tokens == 50
-    assert "faithfulness:" in calls[0]  # rubric is in the system prompt
 
 
 def test_judge_gives_up_after_three_bad_answers(monkeypatch):
@@ -304,3 +321,70 @@ def test_usage_add_tolerates_missing_counts():
     u.add(ChatResult(content="{}"))
     u.add(ChatResult(content="{}", input_tokens=5, output_tokens=2))
     assert u.as_dict() == {"calls": 2, "input_tokens": 5, "output_tokens": 2}
+
+
+def test_usage_add_is_thread_safe():
+    u = Usage()
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        list(ex.map(lambda _: u.add(ChatResult(content="{}", input_tokens=1, output_tokens=1)), range(4000)))
+    assert u.as_dict() == {"calls": 4000, "input_tokens": 4000, "output_tokens": 4000}
+
+
+def test_chapter_detail_empty_writeup_is_an_error_row_and_not_judged(dataset, monkeypatch):
+    """An enrichment whose every attempt comes back empty falls back to the
+    (blank) chapters-pass summary; that is a generation failure, not an 'ok'
+    row the judge should be paid to grade. (A non-empty stub is kept, as in
+    production, and graded as the thin output it is.)"""
+    judged = []
+
+    def chat(backend, system, user, schema, repair=False, ignore_providers=None):
+        if "strict, calibrated evaluator" in system:
+            judged.append(user)
+            return ChatResult(content=json.dumps(_judge_payload(user)))
+        text = user if isinstance(user, str) else user[-1]["text"]
+        if "CHAPTER TITLE: Topic one" in text:
+            return ChatResult(content=json.dumps({"summary": ""}))
+        return ChatResult(content=json.dumps(DETAIL_OUT))
+
+    monkeypatch.setattr(summarize, "_dispatch_chat", chat)
+    out = dataset / "runs" / "chapter_detail" / "empty"
+    run(RunConfig(eval="chapter_detail", backend=BACKEND, judge=JUDGE, dataset=dataset, out=out, reps=1))
+    rows = {r["item"]: r for r in (json.loads(line) for line in (out / "results.jsonl").read_text().splitlines())}
+    assert rows["c02"]["status"] == "error" and rows["c02"]["failure_class"] == "degenerate"
+    assert rows["c02"]["judge"] is None and rows["c01"]["status"] == "ok" and rows["c03"]["status"] == "ok"
+    assert len(judged) == 2
+    s = summarize_run(out)
+    assert s["failure_classes"] == {"degenerate": 1}
+
+
+def test_run_records_a_case_with_no_items_instead_of_crashing(dataset, monkeypatch):
+    monkeypatch.setattr(summarize, "_dispatch_chat", _fake_chat(ALL))
+    monkeypatch.setitem(STEPS, "chapter_detail", lambda *a, **k: [])
+    out = dataset / "runs" / "chapter_detail" / "none"
+    run(RunConfig(eval="chapter_detail", backend=BACKEND, judge=JUDGE, dataset=dataset, out=out, reps=1))
+    [row] = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
+    assert row["status"] == "error" and row["failure_class"] == "no_items" and row["gen"]["calls"] == 0
+
+
+# --- CLI -------------------------------------------------------------------
+
+def test_parse_spec_handles_tags_and_efforts():
+    assert _parse_spec("anthropic:claude-haiku-5-5") == ("anthropic", "claude-haiku-5-5", None)
+    assert _parse_spec("anthropic:claude-haiku-5-5:low") == ("anthropic", "claude-haiku-5-5", "low")
+    assert _parse_spec("openrouter:deepseek/deepseek-v4-flash") == ("openrouter", "deepseek/deepseek-v4-flash", None)
+    assert _parse_spec("ollama:gemma4:e4b") == ("ollama", "gemma4:e4b", None)  # a tag, not an effort
+    with pytest.raises(SystemExit, match="effort"):
+        _parse_spec("anthropic:claude-haiku-5-5:lwo")
+    with pytest.raises(SystemExit, match="bad model spec"):
+        _parse_spec("anthropic")
+    with pytest.raises(SystemExit, match="bad model spec"):
+        _parse_spec("bedrock:foo")
+
+
+def test_judge_estimate_counts_every_chapter_when_uncapped(dataset):
+    price = PRICES_PER_MTOK[JUDGE.model]
+    capped = _estimate_judge_usd(dataset, ["chapter_detail"], 1, 1, JUDGE, 2)
+    uncapped = _estimate_judge_usd(dataset, ["chapter_detail"], 1, 1, JUDGE, 0)
+    per_item = (len(TRANSCRIPT) / 22 * price[0] + 1000 * price[1]) / 1e6
+    assert capped == pytest.approx(2 * per_item) and uncapped == pytest.approx(4 * per_item)
+    assert _estimate_judge_usd(dataset, ["summary"], 2, 3, JUDGE, 3) > 0

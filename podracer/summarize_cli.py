@@ -8,8 +8,8 @@ import httpx
 from podracer import logger
 from podracer.logging_config import configure_logging
 from podracer.models import PodcastSummary
+from podracer.providers import ANTHROPIC_DEFAULT_EFFORT
 from podracer.summarize import (
-    ANTHROPIC_DEFAULT_EFFORT,
     Backend,
     DegenerateOutputError,
     ProviderNotAllowedError,
@@ -92,7 +92,11 @@ def main():
         if not api_key:
             logger.error("ANTHROPIC_API_KEY environment variable is required")
             sys.exit(1)
-        backend = Backend.anthropic(args.model, api_key, effort=args.effort or ANTHROPIC_DEFAULT_EFFORT)
+        try:
+            backend = Backend.anthropic(args.model, api_key, effort=args.effort or ANTHROPIC_DEFAULT_EFFORT)
+        except ValueError as e:  # bad --effort
+            logger.error("--effort: %s", e)
+            sys.exit(1)
     elif args.backend == "vllm":
         backend = Backend.vllm(args.model, args.base_url or "http://localhost:8000")
     else:

@@ -4,8 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from podracer import logger
-from podracer.providers import validate_allowlist
-from podracer.summarize import validate_effort
+from podracer.providers import validate_allowlist, validate_effort
 
 CONFIG_FILENAME = "config.toml"
 CREDENTIALS_DIR = ".credentials"
