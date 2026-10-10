@@ -4,3 +4,8 @@ data/
 __pycache__/
 *.pyc
 *.egg-info/
+
+# LLM eval dataset + runs: real transcripts and speaker names stay out of the public repo
+eval/data/
+eval/runs/
+eval/*.zip

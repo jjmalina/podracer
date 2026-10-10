@@ -25,6 +25,10 @@ Local-first podcast knowledge platform: ingest audio, transcribe, summarize, sea
 
 # Run the whisper transcription service (requires torch + GPU)
 .venv/bin/python3 -m podracer.whisper_service --host 0.0.0.0 --port 9000
+
+# Model evals for the per-episode LLM prompts (dataset + runs are gitignored; see eval/README.md)
+.venv/bin/python3 -m podracer.evals run --eval summary --backend anthropic --model claude-haiku-5-5
+.venv/bin/python3 -m podracer.evals compare eval/runs/summary/*
 ```
 
 ## Rules

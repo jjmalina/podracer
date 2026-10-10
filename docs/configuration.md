@@ -56,9 +56,10 @@ diarize = true
 # service_auth_token = "..."             # optional bearer auth
 
 [summarize]
-backend = "openrouter"             # ollama, vllm, openrouter
+backend = "openrouter"             # ollama, vllm, openrouter, anthropic
 model = "deepseek/deepseek-v4-flash"
 # base_url = "http://localhost:11434"
+# anthropic_effort = "low"         # anthropic only: low / medium / high / xhigh / max
 # openrouter_providers = ["deepinfra", "digitalocean"]   # see "OpenRouter provider allowlist"
 
 [daemon]
@@ -121,6 +122,7 @@ API keys can be set in three places (checked in this order):
 |-----|-------------|-------------------|---------|
 | HuggingFace | `[keys] hf_token` | `.credentials/hf_token` | `HF_TOKEN` |
 | OpenRouter | `[keys] openrouter_api_key` | `.credentials/openrouter_token` | `OPENROUTER_API_KEY` |
+| Anthropic | `[keys] anthropic_api_key` | `.credentials/anthropic_token` | `ANTHROPIC_API_KEY` |
 | Deepgram | `[keys] deepgram_api_key` | `.credentials/deepgram_token` | `DEEPGRAM_API_KEY` |
 | Podcast Index key | `[keys] podcast_index_key` | `.credentials/podcast_index` (line 1) | `PODCAST_INDEX_KEY` |
 | Podcast Index secret | `[keys] podcast_index_secret` | `.credentials/podcast_index` (line 2) | `PODCAST_INDEX_SECRET` |
@@ -135,6 +137,7 @@ The `.credentials/` directory is gitignored. See `.credentials/example` for setu
 | `PODRACER_MEDIA_DIR` | `general.media_dir` |
 | `HF_TOKEN` | `keys.hf_token` |
 | `OPENROUTER_API_KEY` | `keys.openrouter_api_key` |
+| `ANTHROPIC_API_KEY` | `keys.anthropic_api_key` |
 | `DEEPGRAM_API_KEY` | `keys.deepgram_api_key` |
 | `PODCAST_INDEX_KEY` | `keys.podcast_index_key` |
 | `PODCAST_INDEX_SECRET` | `keys.podcast_index_secret` |
@@ -150,4 +153,5 @@ podracer transcribe 1 --backend whisperx-http --no-diarize
 
 # Override summarization settings
 podracer summarize 1 --backend openrouter --model deepseek/deepseek-v4-flash
+podracer summarize 1 --backend anthropic --model claude-haiku-5-5
 ```

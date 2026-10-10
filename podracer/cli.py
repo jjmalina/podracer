@@ -599,7 +599,7 @@ def main():
     p_summarize = subparsers.add_parser("summarize", help="Summarize an episode")
     p_summarize.add_argument("episode_id", type=int, help="Episode ID")
     p_summarize.add_argument("--model", default=None, help="Model name (default: from config)")
-    p_summarize.add_argument("--backend", choices=["ollama", "vllm", "openrouter"], default=None,
+    p_summarize.add_argument("--backend", choices=["ollama", "vllm", "openrouter", "anthropic"], default=None,
                              help="Inference backend (default: from config)")
     p_summarize.add_argument("--base-url", default=None, help="Backend API base URL")
     p_summarize.add_argument("--force", action="store_true", help="Re-summarize even if summary exists")
@@ -608,7 +608,7 @@ def main():
     p_process = subparsers.add_parser("process", help="Process an episode: download, transcribe, summarize")
     p_process.add_argument("episode_id", type=int, help="Episode ID")
     p_process.add_argument("--model", default=None, help="Summarization model name")
-    p_process.add_argument("--backend", choices=["ollama", "vllm", "openrouter"], default=None,
+    p_process.add_argument("--backend", choices=["ollama", "vllm", "openrouter", "anthropic"], default=None,
                            help="Inference backend")
     p_process.add_argument("--base-url", default=None, help="Backend API base URL")
     p_process.add_argument("--force", action="store_true",

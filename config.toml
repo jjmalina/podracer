@@ -37,5 +37,6 @@ auto_retry_cooldown_hours = 6
 # [keys]
 # hf_token = "hf_..."
 # openrouter_api_key = "sk-or-..."
+# anthropic_api_key = "sk-ant-..."
 # podcast_index_key = "..."
 # podcast_index_secret = "..."

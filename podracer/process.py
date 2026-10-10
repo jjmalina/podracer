@@ -169,6 +169,11 @@ def _build_summarize_backend(cfg: Config, backend: str | None, model: str | None
                     providers=cfg.summarize_openrouter_providers or "any")
         return Backend.openrouter(model_name, api_key,
                                   providers=cfg.summarize_openrouter_providers)
+    if backend_name == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or cfg.anthropic_api_key
+        if not api_key:
+            raise RuntimeError("anthropic backend requires ANTHROPIC_API_KEY")
+        return Backend.anthropic(model_name, api_key, effort=cfg.summarize_anthropic_effort)
     if backend_name == "vllm":
         return Backend.vllm(model_name, base_url or "http://localhost:8000")
     return Backend.ollama(model_name, base_url or "http://localhost:11434")

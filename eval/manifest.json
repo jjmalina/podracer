@@ -1,0 +1,19 @@
+{
+  "_comment": "Prod episode ids for the LLM-prompt evals. Transcripts are pulled into eval/data/ (gitignored) by `python -m podracer.evals fetch`. Tags describe why each episode is in the set.",
+  "episodes": [
+    {"id": 310791,  "tags": ["short", "solo", "teaser"]},
+    {"id": 169211,  "tags": ["short", "solo"]},
+    {"id": 244321,  "tags": ["short", "2-speakers", "teaser", "macro"]},
+    {"id": 73621,   "tags": ["mid", "4-speakers", "teaser", "finance"]},
+    {"id": 868521,  "tags": ["mid", "3-speakers", "finance"]},
+    {"id": 277201,  "tags": ["mid", "4-speakers", "teaser", "roundtable"]},
+    {"id": 934067,  "tags": ["mid", "3-speakers", "macro"]},
+    {"id": 446271,  "tags": ["mid", "2-speakers", "teaser", "finance"]},
+    {"id": 619731,  "tags": ["long", "2-speakers", "geopolitics"]},
+    {"id": 906661,  "tags": ["long", "3-speakers", "teaser", "technical-ai"]},
+    {"id": 23681,   "tags": ["long", "5-speakers", "panel", "prod-degenerate-highlights"]},
+    {"id": 1066011, "tags": ["long", "2-speakers", "teaser", "technical-software"]},
+    {"id": 405371,  "tags": ["very-long", "3-speakers", "teaser", "finance"]},
+    {"id": 613211,  "tags": ["very-long", "2-speakers", "teaser", "technical-ai"]}
+  ]
+}

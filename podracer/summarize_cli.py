@@ -8,7 +8,13 @@ import httpx
 from podracer import logger
 from podracer.logging_config import configure_logging
 from podracer.models import PodcastSummary
-from podracer.summarize import Backend, DegenerateOutputError, ProviderNotAllowedError, summarize
+from podracer.providers import ANTHROPIC_DEFAULT_EFFORT
+from podracer.summarize import (
+    Backend,
+    DegenerateOutputError,
+    ProviderNotAllowedError,
+    summarize,
+)
 
 
 def print_summary(result: PodcastSummary) -> None:
@@ -47,12 +53,17 @@ def main():
     parser.add_argument("transcript_file", help="Path to a transcript text file")
     parser.add_argument("--model", default="gemma4:e4b", help="Model name (default: gemma4:e4b)")
     parser.add_argument(
-        "--backend", choices=["ollama", "vllm", "openrouter"], default="ollama", help="Inference backend",
+        "--backend", choices=["ollama", "vllm", "openrouter", "anthropic"], default="ollama",
+        help="Inference backend",
     )
     parser.add_argument("--base-url", default=None, help="Backend API base URL (default: auto per backend)")
     parser.add_argument(
         "--providers", default=None,
         help="openrouter only: comma-separated provider slugs to allow (e.g. deepinfra,digitalocean)",
+    )
+    parser.add_argument(
+        "--effort", default=None,
+        help="anthropic only: output_config.effort (low/medium/high/xhigh/max; default low)",
     )
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of formatted text")
 
@@ -75,6 +86,16 @@ def main():
             backend = Backend.openrouter(args.model, api_key, providers=providers)
         except ValueError as e:  # empty / all-denylisted --providers
             logger.error("--providers: %s", e)
+            sys.exit(1)
+    elif args.backend == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            logger.error("ANTHROPIC_API_KEY environment variable is required")
+            sys.exit(1)
+        try:
+            backend = Backend.anthropic(args.model, api_key, effort=args.effort or ANTHROPIC_DEFAULT_EFFORT)
+        except ValueError as e:  # bad --effort
+            logger.error("--effort: %s", e)
             sys.exit(1)
     elif args.backend == "vllm":
         backend = Backend.vllm(args.model, args.base_url or "http://localhost:8000")

@@ -22,3 +22,9 @@
 # Contents (two lines):
 # PODCAST_INDEX_API_KEY=your_key_here
 # PODCAST_INDEX_API_SECRET=your_secret_here
+
+# --- anthropic_token ---
+# Anthropic API key for cloud summarization with Claude (--backend anthropic)
+# Get one at: https://platform.claude.com/
+# Save to: .credentials/anthropic_token
+# Contents: just the key string, e.g. sk-ant-xxxxxxxxxxxxx
