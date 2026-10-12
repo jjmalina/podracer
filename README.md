@@ -63,6 +63,7 @@ Drop API tokens in `.credentials/` (gitignored) or set env vars:
 mkdir -p .credentials
 echo "<deepgram-key>" > .credentials/deepgram_token
 echo "<openrouter-key>" > .credentials/openrouter_token
+echo "<anthropic-key>" > .credentials/anthropic_token   # for --backend anthropic
 # For whisperx diarization only:
 echo "<huggingface-token>" > .credentials/hf_token
 ```

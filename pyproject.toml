@@ -17,6 +17,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "structlog>=24.1",
     "sentry-sdk>=2.0",
+    "anthropic>=1.12.1",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +40,7 @@ podracer = "podracer.cli:main"
 podracer-whisper = "podracer.whisper_service.__main__:main"
 transcribe = "podracer.transcribe:main"
 summarize = "podracer.summarize_cli:main"
+podracer-eval = "podracer.evals.__main__:main"
 
 [tool.ruff]
 target-version = "py312"

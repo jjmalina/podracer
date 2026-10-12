@@ -1,12 +1,37 @@
-"""OpenRouter provider policy: the allowlist model boundary.
+"""Provider policy: the model boundaries for per-backend settings.
 
-One place decides what a valid allowlist is, how a response's provider
-display name maps onto a configured slug, and which providers are never
-routed to. Config loading, ``Backend.openrouter`` and the CLI all validate
-through :func:`validate_allowlist`, so an allowlist can't silently turn
-itself off at any entry point.
+A leaf module (no podracer imports) so config loading and the CLIs can
+validate settings without pulling the summarize module and its SDK clients
+into every process. Two boundaries live here:
+
+* the OpenRouter provider allowlist — what a valid allowlist is, how a
+  response's provider display name maps onto a configured slug, and which
+  providers are never routed to. Config loading, ``Backend.openrouter`` and
+  the CLI all validate through :func:`validate_allowlist`, so an allowlist
+  can't silently turn itself off at any entry point;
+* the Anthropic ``effort`` setting, via :func:`validate_effort`.
 """
 import re
+from typing import Literal, cast
+
+# Anthropic: thinking depth for structured-output passes. Low mirrors the other
+# backends (thinking off / reasoning effort "none"): these are JSON extraction
+# passes over a transcript that is already in context, and the April-2026 model
+# comparison found no quality benefit from reasoning on them. Tunable per
+# backend (Backend.effort) so the eval harness can sweep it.
+AnthropicEffort = Literal["low", "medium", "high", "xhigh", "max"]
+ANTHROPIC_EFFORTS: tuple[AnthropicEffort, ...] = ("low", "medium", "high", "xhigh", "max")
+ANTHROPIC_DEFAULT_EFFORT: AnthropicEffort = "low"
+
+
+def validate_effort(value: object, *, where: str = "effort") -> AnthropicEffort:
+    """One boundary for the Anthropic effort setting: config, CLI flags and the
+    Backend factory all pass through here, so a typo fails at startup instead
+    of as a 400 on the first summarize job."""
+    if value in ANTHROPIC_EFFORTS:
+        return cast(AnthropicEffort, value)
+    raise ValueError(f"{where} must be one of {list(ANTHROPIC_EFFORTS)}; got {value!r}")
+
 
 # Providers that advertise response_format.json_schema support (so they pass
 # require_parameters) but return prose anyway — never route to them. Baidu was

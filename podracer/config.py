@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from podracer import logger
-from podracer.providers import validate_allowlist
+from podracer.providers import validate_allowlist, validate_effort
 
 CONFIG_FILENAME = "config.toml"
 CREDENTIALS_DIR = ".credentials"
@@ -48,6 +48,8 @@ class Config:
     # requests are routed only to these providers and a response attributed to
     # any other provider is rejected. None = OpenRouter's default routing.
     summarize_openrouter_providers: list[str] | None = None
+    # Anthropic backend: output_config.effort for the structured-output passes.
+    summarize_anthropic_effort: str = "low"
 
     # Daemon / worker
     sync_interval_minutes: int = 30      # how often to fetch feeds + enqueue
@@ -89,6 +91,7 @@ class Config:
     # API keys
     hf_token: str | None = None
     openrouter_api_key: str | None = None
+    anthropic_api_key: str | None = None
     deepgram_api_key: str | None = None
     podcast_index_key: str | None = None
     podcast_index_secret: str | None = None
@@ -184,6 +187,10 @@ def load_config() -> Config:
         config.summarize_base_url = summarize.get("base_url", config.summarize_base_url)
         # Validated at load so a bad allowlist fails at startup, not on the
         # first summarize job; Backend.openrouter re-validates for other callers.
+        config.summarize_anthropic_effort = validate_effort(
+            summarize.get("anthropic_effort", config.summarize_anthropic_effort),
+            where="[summarize] anthropic_effort",
+        )
         config.summarize_openrouter_providers = validate_allowlist(
             summarize.get("openrouter_providers"), where="[summarize] openrouter_providers",
         )
@@ -224,6 +231,7 @@ def load_config() -> Config:
         keys = data.get("keys", {})
         config.hf_token = keys.get("hf_token")
         config.openrouter_api_key = keys.get("openrouter_api_key")
+        config.anthropic_api_key = keys.get("anthropic_api_key")
         config.deepgram_api_key = keys.get("deepgram_api_key")
         config.podcast_index_key = keys.get("podcast_index_key")
         config.podcast_index_secret = keys.get("podcast_index_secret")
@@ -234,6 +242,8 @@ def load_config() -> Config:
         config.hf_token = _read_credential_file(root, "hf_token")
     if not config.openrouter_api_key:
         config.openrouter_api_key = _read_credential_file(root, "openrouter_token")
+    if not config.anthropic_api_key:
+        config.anthropic_api_key = _read_credential_file(root, "anthropic_token")
     if not config.deepgram_api_key:
         config.deepgram_api_key = _read_credential_file(root, "deepgram_token")
     if not config.podcast_index_key or not config.podcast_index_secret:
@@ -247,6 +257,7 @@ def load_config() -> Config:
     config.media_dir = os.environ.get("PODRACER_MEDIA_DIR", config.media_dir)
     config.hf_token = os.environ.get("HF_TOKEN", config.hf_token)
     config.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY", config.openrouter_api_key)
+    config.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", config.anthropic_api_key)
     config.deepgram_api_key = os.environ.get("DEEPGRAM_API_KEY", config.deepgram_api_key)
     config.podcast_index_key = os.environ.get("PODCAST_INDEX_KEY", config.podcast_index_key)
     config.podcast_index_secret = os.environ.get("PODCAST_INDEX_SECRET", config.podcast_index_secret)
