@@ -17,7 +17,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "structlog>=24.1",
     "sentry-sdk>=2.0",
-    "anthropic>=1.12.1",
+    "anthropic>=2.3.0",
 ]
 
 [project.optional-dependencies]
