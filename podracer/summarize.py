@@ -672,7 +672,7 @@ def _chat_anthropic(backend: Backend, system: str, user: str | list[dict], schem
         logger.warning("llm_refusal", model=backend.model,
                        category=getattr(details, "category", None),
                        explanation=getattr(details, "explanation", None))
-    text = "".join(block.text for block in response.content if block.type == "text")
+    text = "".join(getattr(block, "text", "") for block in response.content if block.type == "text")
     content_json = _extract_json(text)
     if repair:
         content_json = _repair_truncated_json(content_json)

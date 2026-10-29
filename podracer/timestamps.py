@@ -65,8 +65,13 @@ def chronological_key(seconds: int | None, timestamp: str) -> tuple[int, float, 
 
 class Timestamped(Protocol):
     """Anything carrying an HH:MM:SS stamp plus its parsed form (Chapter,
-    Highlight). ``seconds`` is None for a malformed stamp."""
-    timestamp: str
+    Highlight). ``seconds`` is None for a malformed stamp.
+
+    ``timestamp`` is a read-only protocol member: the models declare it as a
+    frozen pydantic field, and a plain ``timestamp: str`` attribute here would
+    demand writability they deliberately don't offer (ty 0.0.9x enforces this)."""
+    @property
+    def timestamp(self) -> str: ...
 
     @property
     def seconds(self) -> int | None: ...

@@ -187,7 +187,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     dirs = [Path(d) for d in args.runs]
     missing = [d for d in dirs if not (d / "results.jsonl").exists()]
     if missing:
-        raise SystemExit(f"no results.jsonl in: {', '.join(map(str, missing))}")
+        raise SystemExit(f"no results.jsonl in: {', '.join(str(d) for d in missing)}")
     if args.json:
         print(json.dumps([summarize_run(d) for d in dirs], indent=1))
     else:
@@ -199,7 +199,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     dirs = [Path(d) for d in args.runs]
     missing = [d for d in dirs if not (d / "results.jsonl").exists()]
     if missing:
-        raise SystemExit(f"no results.jsonl in: {', '.join(map(str, missing))}")
+        raise SystemExit(f"no results.jsonl in: {', '.join(str(d) for d in missing)}")
     out = args.out or (args.dataset / "runs" / "report.html")
     out.write_text(build_html(dirs, args.dataset, title=args.title, redact=args.redact))
     print(json.dumps({"report": str(out)}) if args.json else f"wrote {out}")

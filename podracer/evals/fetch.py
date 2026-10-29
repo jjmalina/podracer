@@ -55,7 +55,7 @@ def fetch(root: Path, ssh: str | None = None, db: str | None = None,
         logger.info("eval_fetch_nothing_to_do", have=len(wanted))
         return []
     cmd = ["ssh", *(os.path.expanduser(tok) for tok in shlex.split(ssh)),
-           "python3", "-", db, ",".join(map(str, todo))]
+           "python3", "-", db, ",".join(str(e) for e in todo)]
     logger.info("eval_fetch", host=ssh, episodes=todo)
     proc = subprocess.run(cmd, input=_REMOTE_SCRIPT, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
