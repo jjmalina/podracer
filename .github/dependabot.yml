@@ -1,0 +1,44 @@
+# Dependabot: keep the Python lock, GitHub Actions and the Docker base image
+# current, and let GitHub raise security PRs (e.g. the Oct 2026 certifi/emSign
+# root-store removal) without anyone noticing the advisory first.
+version: 2
+updates:
+  # Python deps via uv.lock. Minor/patch bumps are grouped into one weekly PR;
+  # majors and security fixes come as their own PRs.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "America/New_York"
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "America/New_York"
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  # nvidia/cuda base image in the Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "America/New_York"
+    commit-message:
+      prefix: "docker"
