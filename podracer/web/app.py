@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.routing import iter_route_contexts
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
@@ -121,13 +122,16 @@ def create_app(cfg: Config) -> FastAPI:
 
     # OpenAPI schema + Swagger UI for the JSON API, scoped to the /api/v1 routes
     # only — the HTML UI routes are filtered out so the contract stays API-only.
+    # Since FastAPI 0.162 an included router sits in app.routes as one opaque
+    # entry (no .path), so walk the route contexts instead of the raw list.
     @app.get(f"{API_PREFIX}/openapi.json", include_in_schema=False)
     def api_openapi() -> JSONResponse:
         return JSONResponse(get_openapi(
             title="podracer REST API",
             version=SCHEMA_VERSION,
             description="Read-only JSON API for podcasts, episodes, summaries, and transcripts.",
-            routes=[r for r in app.routes if getattr(r, "path", "").startswith(API_PREFIX)],
+            routes=[ctx for ctx in iter_route_contexts(app.routes)
+                    if (ctx.path or "").startswith(API_PREFIX)],
         ))
 
     @app.get(f"{API_PREFIX}/docs", include_in_schema=False)

@@ -156,8 +156,11 @@ class _TimestampedModel(BaseModel):
     cached ``seconds`` can never go stale against a reassigned stamp."""
     if TYPE_CHECKING:
         # Type-only declaration: never executes at runtime, so pydantic sees
-        # no field here; subclasses provide the real one.
-        timestamp: str
+        # no field here; subclasses provide the real one. Read-only, matching
+        # the frozen field the subclasses declare (a writable ``str`` here
+        # would make their frozen override an invalid-mutable-override).
+        @property
+        def timestamp(self) -> str: ...
 
     @cached_property
     def seconds(self) -> int | None:
