@@ -39,3 +39,17 @@ Local-first podcast knowledge platform: ingest audio, transcribe, summarize, sea
   the top of the module, never inside functions. If a heavy dep (e.g. torch,
   whisperx) shouldn't be loaded by every caller, put that code in its own module
   so callers can opt in by importing that module. Enforced by ruff `PLC0415`.
+
+## Git and pull requests
+
+- `main` is PR-only with **squash merges** (`gh pr merge --squash --delete-branch`).
+- **Merge only when every check is green.** Run `gh pr checks <n> --watch` on
+  its own (not piped into `tail`/`grep`, which hides the exit code) and merge
+  only if it exits 0. "no checks reported" means the run hasn't started yet:
+  wait for it, don't merge.
+- Dependabot: grouped minor/patch PRs can be merged once CI is green; majors
+  only after reading the changelog for APIs we use. A PR that reaches a fix
+  by pulling in a pre-release of a dependency (e.g. a `whisperx` rc) waits for
+  the final release.
+- Homelab-specific operations tooling (endpoints, secrets, triage scripts)
+  belongs in the private homelab repo, not here: this project is public.
