@@ -46,7 +46,9 @@ Local-first podcast knowledge platform: ingest audio, transcribe, summarize, sea
 - **Merge only when every check is green.** Run `gh pr checks <n> --watch` on
   its own (not piped into `tail`/`grep`, which hides the exit code) and merge
   only if it exits 0. "no checks reported" means the run hasn't started yet:
-  wait for it, don't merge.
+  wait for it, don't merge. Since 2026-11-02 the `main` ruleset requires the
+  `checks` job, so GitHub refuses the merge anyway; if the job in `ci.yml` is
+  renamed, rename it in the ruleset too.
 - Dependabot: grouped minor/patch PRs can be merged once CI is green; majors
   only after reading the changelog for APIs we use. A PR that reaches a fix
   by pulling in a pre-release of a dependency (e.g. a `whisperx` rc) waits for
