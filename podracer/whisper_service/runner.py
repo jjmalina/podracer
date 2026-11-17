@@ -1,6 +1,10 @@
 """Whisperx model loading and transcription. This is the only module that imports
 torch / whisperx. The rest of podracer talks to the service over HTTP.
 """
+import os
+from pathlib import Path
+
+import nltk
 import torch
 
 # PyTorch 2.6+ defaults weights_only=True; pyannote/lightning needs it False.
@@ -22,6 +26,26 @@ from podracer import logger  # noqa: E402
 from podracer.timestamps import format_timestamp  # noqa: E402
 
 
+def ensure_alignment_data() -> None:
+    """whisperx.align splits sentences with NLTK's punkt_tab, which isn't shipped
+    with the package; without it every request 500s at the align step.
+
+    Kept in a private dir of our own: NLTK refuses to read or install data in a
+    directory others can write to, and ~/nltk_data often is (umask 002).
+    """
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    data_dir = cache_home / "podracer" / "nltk_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.chmod(0o700)
+    nltk.data.path.insert(0, str(data_dir))
+    try:
+        nltk.data.find("tokenizers/punkt_tab", paths=[str(data_dir)])
+    except LookupError:
+        logger.info("Downloading NLTK punkt_tab to %s (needed by whisperx alignment)", data_dir)
+        if not nltk.download("punkt_tab", download_dir=str(data_dir), quiet=True):
+            raise RuntimeError("failed to download NLTK punkt_tab") from None
+
+
 def load_whisper_model(model_size: str, device: str, compute_type: str):
     logger.info("Loading whisper model: %s (device=%s, compute=%s)", model_size, device, compute_type)
     return whisperx.load_model(model_size, device=device, compute_type=compute_type)
@@ -34,7 +58,7 @@ def load_align_model(language: str, device: str):
 
 def load_diarize_pipeline(hf_token: str, device: str):
     logger.info("Loading diarization pipeline")
-    return DiarizationPipeline(use_auth_token=hf_token, device=device)
+    return DiarizationPipeline(token=hf_token, device=device)
 
 
 def transcribe_audio(

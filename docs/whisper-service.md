@@ -27,7 +27,7 @@ In `config.toml`:
 
 ```toml
 [transcribe]
-backend = "whisperx-http"
+backend = "whisperx-http"        # or "prefer-whisperx": see below
 service_url = "http://127.0.0.1:9000"
 # service_auth_token = "..."     # if the service requires bearer auth
 diarize = true
@@ -39,7 +39,7 @@ port = 9000
 
 # Server-side model selection (used when the service starts)
 # These also live under [transcribe]:
-#   whisperx_model = "small"     # tiny / base / small / medium / large
+#   whisperx_model = "large-v3"  # tiny / base / small / medium / large-v3
 #   device         = "cuda"
 #   compute_type   = "float16"   # int8 if running on CPU
 
@@ -50,6 +50,29 @@ hf_token = "hf_..."              # required for diarization
 Diarization needs a HuggingFace token with accepted licenses for
 [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
 and [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0).
+
+### Falling back to Deepgram (`prefer-whisperx`)
+
+For a GPU host that isn't always on (e.g. a desktop), set
+`backend = "prefer-whisperx"` and configure both `service_url` and a Deepgram
+key. Each transcribe job then:
+
+1. probes `GET /v1/health` with a 3 s timeout (a sleeping/powered-off host
+   doesn't refuse connections, it just never answers);
+2. if the service is up (and has diarization when `diarize = true`), sends the
+   audio there — no retries;
+3. otherwise, or if the request fails partway (host shut down mid-job, 5xx),
+   transcribes with Deepgram instead.
+
+The request socket uses TCP keepalive, so a host that loses power mid-request
+is detected in about a minute instead of after the 1 h read timeout. A 4xx
+from the service (bad auth token, etc.) still falls back but is also reported
+to Sentry, since it means every job is silently going to the paid API.
+
+Each choice is logged as `transcribe_backend_selected` (`backend`, plus
+`fallback_reason` when Deepgram was used), and the stored transcript's
+`model` records the engine that actually ran (`whisperx:large-v3` or
+`deepgram:nova-3`).
 
 ## Run
 
@@ -146,11 +169,11 @@ curl -s -X POST http://127.0.0.1:9000/v1/transcribe \
 
 # Python client
 .venv/bin/python -c "
+from dataclasses import replace
+from podracer.config import load_config
 from podracer.transcribe import transcribe
-print(transcribe('/tmp/clip.mp3',
-                 backend='whisperx-http',
-                 service_url='http://127.0.0.1:9000',
-                 diarize=True))
+cfg = replace(load_config(), transcribe_service_url='http://127.0.0.1:9000')
+print(transcribe('/tmp/clip.mp3', cfg, backend='whisperx-http').text)
 "
 
 # Full pipeline through the service (set config.toml: backend = 'whisperx-http')
@@ -191,6 +214,12 @@ parallel and watching `/v1/info` — `in_flight` toggles between 0 and 1, never
   to the worker's filesystem. A 200 MB MP3 streams to a tempfile under
   `/tmp/whisper-*.mp3`, transcribes, and gets deleted in the request's
   `finally` block.
+- **NLTK data.** whisperx alignment needs NLTK's `punkt_tab`; the service
+  downloads it on first start into `$XDG_CACHE_HOME/podracer/nltk_data`
+  (private, because NLTK refuses group-writable data dirs like a default
+  `~/nltk_data`).
+- **Throughput.** On an RTX 5090, `large-v3` + diarization transcribes a
+  10-minute clip in ~17 s (~35x real time) using ~7 GB of VRAM.
 - **Languages.** Whisper auto-detects on first pass. Alignment models load
   per language on first request and stay cached in memory for the life of
   the process. The `/v1/info` endpoint shows which alignment models are

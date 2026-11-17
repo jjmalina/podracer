@@ -122,29 +122,9 @@ def transcribe_episode(
 
     audio_path = resolve_audio_path(conn, cfg, episode, force=force)
 
-    backend = cfg.transcribe_backend
-    if backend == "deepgram":
-        if not cfg.deepgram_api_key:
-            raise RuntimeError("deepgram backend requires DEEPGRAM_API_KEY")
-        model = cfg.transcribe_deepgram_model
-    elif backend == "whisperx-http":
-        if not cfg.transcribe_service_url:
-            raise RuntimeError("whisperx-http requires transcribe.service_url")
-        model = cfg.transcribe_whisperx_model
-    else:
-        raise RuntimeError(f"unknown transcribe backend: {backend!r}")
-
-    logger.info("Transcribing: %s (backend=%s)", episode.title, backend)
-    text = transcribe(
-        audio_path,
-        backend=backend,
-        model=model,
-        deepgram_api_key=cfg.deepgram_api_key,
-        service_url=cfg.transcribe_service_url,
-        service_auth_token=cfg.transcribe_service_auth_token,
-        diarize=cfg.diarize,
-    )
-    save_transcript(conn, episode.id, text, f"{backend}:{model}")
+    logger.info("Transcribing: %s (backend=%s)", episode.title, cfg.transcribe_backend)
+    result = transcribe(audio_path, cfg)
+    save_transcript(conn, episode.id, result.text, result.source)
     if get_summary(conn, episode.id):
         # The stored summary was built from the transcript just replaced, so
         # its timestamps may no longer line up with the audio (the episode
