@@ -46,13 +46,14 @@ db_path = "./data/podracer.db"      # resolved against config file's dir
 media_dir = "./data/media/"
 
 [transcribe]
-backend = "deepgram"           # "deepgram" (cloud) or "whisperx-http" (self-hosted)
+backend = "deepgram"           # "deepgram" (cloud), "whisperx-http" (self-hosted), or
+                               # "prefer-whisperx" (self-hosted when up, else Deepgram)
 deepgram_model = "nova-3"      # nova-3, nova-2, etc.
-whisperx_model = "small"       # tiny/base/small/medium/large (used by the whisper service)
+whisperx_model = "large-v3"    # tiny/base/small/medium/large-v3 (used by the whisper service)
 device = "cuda"                # whisper service: cuda or cpu
 compute_type = "float16"       # whisper service: float16 / int8 / float32
 diarize = true
-# service_url = "http://gpu-host:9000"   # for whisperx-http
+# service_url = "http://gpu-host:9000"   # for whisperx-http / prefer-whisperx
 # service_auth_token = "..."             # optional bearer auth
 
 [summarize]

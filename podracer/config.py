@@ -27,7 +27,7 @@ class Config:
 
     # Transcription
     transcribe_backend: str = "deepgram"
-    transcribe_whisperx_model: str = "small"
+    transcribe_whisperx_model: str = "large-v3"  # used by the whisper service
     transcribe_deepgram_model: str = "nova-3"
     transcribe_device: str = "cuda"
     transcribe_compute_type: str = "float16"

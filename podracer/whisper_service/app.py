@@ -6,7 +6,11 @@ from podracer import logger
 from podracer.config import Config
 from podracer.logging_config import configure_logging
 from podracer.whisper_service.routes import router
-from podracer.whisper_service.runner import load_diarize_pipeline, load_whisper_model
+from podracer.whisper_service.runner import (
+    ensure_alignment_data,
+    load_diarize_pipeline,
+    load_whisper_model,
+)
 from podracer.whisper_service.state import ServiceState
 
 
@@ -22,6 +26,7 @@ def create_app(cfg: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         configure_logging(cfg.log_format)  # consistent format under any ASGI launcher
+        ensure_alignment_data()
         state.whisper_model = load_whisper_model(
             state.model_size, state.device, state.compute_type,
         )

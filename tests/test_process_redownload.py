@@ -21,6 +21,7 @@ from podracer.db import (
     upsert_episode,
     upsert_podcast,
 )
+from podracer.transcribe import TranscriptResult
 from tests.conftest import feed_ep
 
 
@@ -42,6 +43,10 @@ class _FakeStream:
 
     def iter_bytes(self, chunk_size=65536):
         yield self._body
+
+
+def _echo_transcribe(path, cfg, **kwargs) -> TranscriptResult:
+    return TranscriptResult(Path(path).read_bytes().decode(), "fake:m")
 
 
 def _cfg(tmp_path) -> Config:
@@ -99,7 +104,7 @@ def test_transcribe_force_redownloads_wrong_cached_audio(conn, tmp_path, monkeyp
     monkeypatch.setattr(httpx, "stream", lambda method, url, **k: _FakeStream(b"FRESH"))
     # transcribe reads the file it's handed, so the transcript text reveals which
     # bytes were actually used.
-    monkeypatch.setattr(process, "transcribe", lambda path, **k: Path(path).read_bytes().decode())
+    monkeypatch.setattr(process, "transcribe", _echo_transcribe)
 
     process.transcribe_episode(conn, _cfg(tmp_path), eid, force=True)
 
@@ -116,7 +121,7 @@ def test_transcribe_no_force_reuses_cached_audio(conn, tmp_path, monkeypatch):
         raise AssertionError("must not re-download without force")
 
     monkeypatch.setattr(httpx, "stream", no_network)
-    monkeypatch.setattr(process, "transcribe", lambda path, **k: Path(path).read_bytes().decode())
+    monkeypatch.setattr(process, "transcribe", _echo_transcribe)
 
     process.transcribe_episode(conn, _cfg(tmp_path), eid, force=False)
 

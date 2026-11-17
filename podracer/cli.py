@@ -48,7 +48,8 @@ from podracer.search import search_podcasts
 from podracer.sentry_config import configure_sentry
 from podracer.summarize import DegenerateOutputError
 from podracer.summarize_cli import print_summary
-from podracer.transcribe import transcribe
+from podracer.transcribe import BACKENDS as TRANSCRIBE_BACKENDS
+from podracer.transcribe import TranscribeConfigError, transcribe
 from podracer.web.app import create_app
 from podracer.worker import Worker
 
@@ -298,29 +299,15 @@ def cmd_transcribe(args):
         sys.exit(1)
 
     backend = args.backend or cfg.transcribe_backend
-    model = args.model or cfg.transcribe_deepgram_model
-    diarize = not args.no_diarize
-
-    if backend == "deepgram" and not cfg.deepgram_api_key:
-        logger.error("Deepgram backend requires DEEPGRAM_API_KEY (config, credentials, or env).")
-        sys.exit(1)
-    if backend == "whisperx-http" and not cfg.transcribe_service_url:
-        logger.error("whisperx-http backend requires transcribe.service_url in config.")
-        sys.exit(1)
-
     logger.info("Transcribing: %s (backend=%s)", episode.title, backend)
-    text = transcribe(
-        audio_path,
-        backend=backend,
-        model=model,
-        deepgram_api_key=cfg.deepgram_api_key,
-        service_url=cfg.transcribe_service_url,
-        service_auth_token=cfg.transcribe_service_auth_token,
-        diarize=diarize,
-    )
-
-    model_tag = model if backend == "deepgram" else cfg.transcribe_whisperx_model
-    save_transcript(conn, episode.id, text, f"{backend}:{model_tag}")
+    try:
+        result = transcribe(audio_path, cfg, backend=backend, deepgram_model=args.model,
+                            diarize=not args.no_diarize)
+    except TranscribeConfigError as e:
+        logger.error("%s", e)
+        sys.exit(1)
+    text = result.text
+    save_transcript(conn, episode.id, text, result.source)
 
     if args.json:
         saved = get_transcript(conn, episode.id)
@@ -588,7 +575,7 @@ def main():
 
     p_transcribe = subparsers.add_parser("transcribe", help="Transcribe an episode")
     p_transcribe.add_argument("episode_id", type=int, help="Episode ID")
-    p_transcribe.add_argument("--backend", choices=["deepgram", "whisperx-http"], default=None,
+    p_transcribe.add_argument("--backend", choices=TRANSCRIBE_BACKENDS, default=None,
                               help="Transcription backend (default: from config)")
     p_transcribe.add_argument("--model", default=None, help="Deepgram model name (default: from config)")
     p_transcribe.add_argument("--no-diarize", action="store_true", help="Skip speaker diarization")
