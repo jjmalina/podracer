@@ -218,7 +218,7 @@ parallel and watching `/v1/info` — `in_flight` toggles between 0 and 1, never
   downloads it on first start into `$XDG_CACHE_HOME/podracer/nltk_data`
   (private, because NLTK refuses group-writable data dirs like a default
   `~/nltk_data`).
-- **Throughput.** On an RTX 5090, `large-v3` + diarization transcribes a
+- **Throughput.** On a current high-end GPU, `large-v3` + diarization transcribes a
   10-minute clip in ~17 s (~35x real time) using ~7 GB of VRAM.
 - **Languages.** Whisper auto-detects on first pass. Alignment models load
   per language on first request and stay cached in memory for the life of

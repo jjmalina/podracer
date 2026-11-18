@@ -4,9 +4,9 @@
 
 ## Objective
 
-Evaluate local LLMs for podcast transcript summarization, with the constraint that the model must coexist on an RTX 4090 (24GB VRAM) alongside WhisperX (transcription) and an embedding model.
+Evaluate local LLMs for podcast transcript summarization, with the constraint that the model must coexist on a 24GB GPU alongside WhisperX (transcription) and an embedding model.
 
-## VRAM Budget (RTX 4090 — 24GB)
+## VRAM Budget (24GB GPU)
 
 | Component | Estimated VRAM |
 |---|---|
@@ -22,13 +22,13 @@ Evaluate local LLMs for podcast transcript summarization, with the constraint th
 - **Size:** 19 GB
 - **Context window:** 32,768 tokens
 - **Result:** Transcript (~40k tokens) exceeded context window. Model truncated input and hallucinated content — fabricated "Bitcoin technical analysis" and "weather conditions" as key topics, missed the actual guest (Craig Shapiro) entirely, and called the named hosts "unspecified."
-- **Verdict:** Unusable for this task due to insufficient context window. Would also be too large to coexist with WhisperX + embeddings on the 4090.
+- **Verdict:** Unusable for this task due to insufficient context window. Would also be too large to coexist with WhisperX + embeddings on a 24GB GPU.
 
 ### gemma4:e4b — Selected
 
 - **Size:** ~9.6 GB (8B params, 4.5B effective, Q4_K_M)
 - **Context window:** 131,072 tokens
-- **Generation speed:** ~159 tok/s on RTX 5090
+- **Generation speed:** ~159 tok/s on a 32GB GPU
 - **Supports:** structured JSON output, tool use, vision, audio, thinking
 - **Requires:** ollama >= 0.20.0
 
@@ -86,7 +86,7 @@ requests.post("http://localhost:11434/api/generate", json={
 ## Next Steps
 
 - Wire up the full pipeline: audio -> WhisperX transcription -> gemma4:e4b summarization
-- Test concurrent VRAM usage on the 4090 with all three models loaded
-- Evaluate generation speed on the 4090 (expect slower than 5090 due to lower memory bandwidth)
+- Test concurrent VRAM usage on a 24GB GPU with all three models loaded
+- Evaluate generation speed on a 24GB GPU (expect slower than the 32GB dev GPU on cards with lower memory bandwidth)
 - Define structured output schema for summaries (topics, speakers, predictions, key quotes)
 - Select and test embedding model for RAG/search over transcripts

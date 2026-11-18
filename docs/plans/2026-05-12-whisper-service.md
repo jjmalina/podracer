@@ -1,7 +1,7 @@
 # Whisper Transcription Service
 
 **Date:** 2026-05-12
-**Status:** Deferred — implement once the RTX 4090 GPU host is online.
+**Status:** Deferred — implement once a GPU host is online.
 **Relates to:** [overview.md](overview.md) inference architecture, [systemd daemon](2026-05-12-systemd-daemon.md), [Deepgram backend](2026-05-18-deepgram-backend.md)
 
 ## Why deferred (2026-05-18 update)
@@ -9,7 +9,7 @@
 V1 deployment runs on a CPU-only LXC and uses the [Deepgram backend](2026-05-18-deepgram-backend.md) for transcription. With no local GPU in the runtime path, there is no GPU for the worker to "hold" and nothing to extract behind an HTTP service.
 
 This plan becomes the right move when:
-- The GPU host (RTX 4090) is racked and addressable on the network.
+- A GPU host is online and addressable on the network.
 - We want to stop paying Deepgram per-minute fees and self-host transcription on hardware we already own.
 - Or we have a quality/latency reason to use whisperx + pyannote diarization specifically.
 
@@ -421,7 +421,7 @@ exist — the main CLI, web app, and worker stay slim.
 
 | Host | Install command | Pulls torch? | Runs whisper service? |
 |---|---|---|---|
-| GPU host (RTX 4090) | `uv pip install -e ".[whisper]"` | yes | yes |
+| GPU host | `uv pip install -e ".[whisper]"` | yes | yes |
 | CPU LXC (web + worker) | `uv pip install -e .` | **no** | no |
 | Dev box (full local stack) | `uv pip install -e ".[whisper]"` | yes | yes |
 

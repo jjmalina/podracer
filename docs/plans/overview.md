@@ -46,7 +46,7 @@ Same library, same code, just decomposed for scale.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **Transcription CLI** | Done | WhisperX + pyannote diarization. ~8 min for 2-hour podcast on RTX 5090. |
+| **Transcription CLI** | Done | WhisperX + pyannote diarization. ~8 min for 2-hour podcast on a 32GB GPU. |
 | **Summarization CLI** | Done | Multi-pass pipeline (speakers → summary → chapters → insights → takes). Three backends: Ollama, vLLM, OpenRouter. |
 | **Model evaluation** | Research done | Tested 6 model/backend combos. Best: Qwen 3.6 35B MoE (quality) or Gemma 4 E4B bf16 (speed). See [eval results](2026-04-24-summarization-eval-results.md). |
 | **Podcast search & download** | Done | Search Podcast Index, subscribe, sync feeds, download audio. SQLite-backed. |
@@ -207,7 +207,7 @@ Podracer talks to AI models through HTTP — always. Whether the model is local 
 | vLLM | `response_format.json_schema` | Yes (continuous batching) | `chat_template_kwargs` | None |
 | OpenRouter | `response_format.json_schema` | N/A (cloud) | `reasoning.effort: none` | API key |
 
-### VRAM Budget (RTX 5090, 32GB)
+### VRAM Budget (32GB GPU)
 
 | Model | Best backend | VRAM | Speed | Quality |
 |-------|-------------|------|-------|---------|

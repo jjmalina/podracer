@@ -508,7 +508,7 @@ of pull.
   ```toml
   [notify]
   backend = "smtp"          # or "resend"
-  from_addr = "podracer@jjcloud.net"
+  from_addr = "podracer@example.com"
   to_addrs  = ["me@example.com"]
   # SMTP-specific:
   smtp_host = "smtp.fastmail.com"
@@ -1098,8 +1098,8 @@ posts, the GitHub repo header, etc.
   spend (e.g. $5). Easiest: don't run any LLM/transcription calls
   at all — all the demo's content is pre-baked and immutable. Save
   the "try on your podcast" flow for v2.
-- Domain: subdomain of an existing one (`podracer.jjcloud.net` is
-  already taken by the private instance — maybe `demo.podracer.dev`
+- Domain: subdomain of an existing one (the private instance's
+  domain is taken — maybe `demo.podracer.dev`
   or just `podracer.example.com`).
 - Trust signal: link from the public demo to the GitHub repo
   (already covered by the banner) plus a clear "do not enter

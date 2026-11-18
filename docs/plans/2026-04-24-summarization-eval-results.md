@@ -4,16 +4,16 @@
 
 ## Test Setup
 
-- **Hardware:** RTX 5090 (32GB VRAM)
+- **Hardware:** single 32GB GPU
 - **Transcript:** Market Huddle ep. 284 (Craig Shapiro), ~136KB, ~43-49K tokens depending on tokenizer
 - **Pipeline:** Multi-pass summarization (speaker ID → summary → chapters → insights → speaker takes)
 - **Backends tested:** Ollama 0.21.2 (GGUF Q4_K_M), vLLM 0.19.1 (bf16, AWQ)
 
 ## TL;DR Recommendation
 
-**Qwen 3.6 35B-A3B MoE on Ollama Q4** is the best option for both RTX 5090 and potentially RTX 4090:
+**Qwen 3.6 35B-A3B MoE on Ollama Q4** is the best option for a 32GB GPU and potentially a 24GB one:
 - Opus-quality analytical depth at ~210s per episode
-- ~23GB VRAM — fits 5090, tight but potentially viable on 4090
+- ~23GB VRAM — fits 32GB, tight but potentially viable on 24GB
 - No vLLM setup needed, simpler operations
 - 15-20 episodes/week = ~1 hour total processing time
 
@@ -57,19 +57,19 @@ Fallback: **Gemma 4 E4B bf16 on vLLM** if speed matters more than analysis quali
 
 ## Hardware Compatibility
 
-### RTX 4090 (24GB)
+### 24GB GPU
 
 | Model | Backend | VRAM | Fits? | Context | Notes |
 |---|---|---|---|---|---|
-| E4B | vLLM bf16 | 22.4 GB | **Yes** (1.6GB headroom) | 65K, ~26K output room | Confirmed via simulation on 5090 |
+| E4B | vLLM bf16 | 22.4 GB | **Yes** (1.6GB headroom) | 65K, ~26K output room | Confirmed via simulation on the 32GB GPU |
 | Qwen 35B MoE | Ollama Q4 | ~23 GB | **Tight** — needs testing | 65K | 1GB headroom on paper. May need reduced context. |
 | Qwen 35B MoE | vLLM AWQ | ~30 GB | **No** | N/A | |
 | Qwen 27B dense | Ollama Q4 | ~19 GB | Yes | 65K | But slow (~9 min) and superseded by MoE |
 | 26B MoE | Ollama Q4 | ~15 GB | Yes | 65K | Lower quality |
 
-**4090 recommendation:** Test Qwen 35B MoE on Ollama first. If it OOMs, fall back to E4B vLLM bf16.
+**24GB recommendation:** Test Qwen 35B MoE on Ollama first. If it OOMs, fall back to E4B vLLM bf16.
 
-### RTX 5090 (32GB)
+### 32GB GPU
 
 | Model | Backend | VRAM | Context | Status |
 |---|---|---|---|---|
@@ -172,12 +172,12 @@ CLI: `summarize transcript.txt --backend ollama|vllm --model <name> --base-url <
 ollama pull qwen3.6:35b-a3b
 summarize data/transcript.txt --model qwen3.6:35b-a3b --json
 
-# vLLM — Qwen 3.6 35B MoE AWQ (5090 only, batched serving)
+# vLLM — Qwen 3.6 35B MoE AWQ (32GB only, batched serving)
 .venv/bin/vllm serve QuantTrio/Qwen3.6-35B-A3B-AWQ \
   --max-model-len 65536 --enforce-eager --max-num-seqs 1 \
   --gpu-memory-utilization 0.95 --port 8000
 
-# vLLM — Gemma 4 E4B bf16 (fast, 4090+5090)
+# vLLM — Gemma 4 E4B bf16 (fast, 24GB+32GB)
 .venv/bin/vllm serve google/gemma-4-E4B-it \
   --dtype auto --max-model-len 65536 \
   --gpu-memory-utilization 0.70 --enforce-eager --max-num-seqs 1 --port 8000
@@ -187,7 +187,7 @@ Requires `transformers>=5.6.2` for Gemma 4 architecture support.
 
 ## Next Steps
 
-- [ ] **Test Qwen 35B MoE Ollama Q4 on RTX 4090** — confirm ~23GB fits in 24GB
+- [ ] **Test Qwen 35B MoE Ollama Q4 on a 24GB GPU** — confirm ~23GB fits in 24GB
 - [ ] **Run multi-transcript eval** — test across 3-5 diverse episodes to confirm quality rankings hold
 - [ ] Build eval framework with Claude as judge to score summaries systematically
 - [ ] Parallelize summarization passes 2-5 on vLLM (concurrent after speaker ID)
@@ -197,10 +197,10 @@ Requires `transformers>=5.6.2` for Gemma 4 architecture support.
 
 ## Conclusion
 
-We tested 6 model/backend combinations on a single RTX 5090 (32GB) for podcast transcript summarization. The core finding: **quantization precision matters more than parameter count**. E4B at bf16 (vLLM) outperformed 26B MoE at Q4 (Ollama) — a 4B model beating a 26B model because full-precision weights preserve the nuance needed for speaker identification and analytical reasoning.
+We tested 6 model/backend combinations on a single 32GB GPU for podcast transcript summarization. The core finding: **quantization precision matters more than parameter count**. E4B at bf16 (vLLM) outperformed 26B MoE at Q4 (Ollama) — a 4B model beating a 26B model because full-precision weights preserve the nuance needed for speaker identification and analytical reasoning.
 
 The quality hierarchy is clear: Qwen 3.6 35B MoE and Claude Opus produce genuinely analytical summaries that explain *why* things matter, while smaller or more aggressively quantized models produce accurate but surface-level recaps.
 
-**The VRAM wall is the hard constraint.** 27B+ dense models simply don't fit on 32GB at any precision that vLLM can serve with usable context. MoE architectures help (35B total / 3B active), but even those are tight. This is a single-GPU limitation — the k3s cluster with multiple GPUs or 48GB+ cards would change the calculus entirely.
+**The VRAM wall is the hard constraint.** 27B+ dense models simply don't fit on 32GB at any precision that vLLM can serve with usable context. MoE architectures help (35B total / 3B active), but even those are tight. This is a single-GPU limitation — multiple GPUs or 48GB+ cards would change the calculus entirely.
 
 **For production today:** Qwen 3.6 35B MoE on Ollama Q4 (~210s/episode, ~23GB) delivers the best quality. E4B on vLLM bf16 (~87s/episode, ~22GB) is the speed/batching option. Both need multi-transcript eval before a final call — one podcast isn't enough to judge, and different episode types (multi-guest panels, technical deep-dives, poor diarization) may shift the rankings.

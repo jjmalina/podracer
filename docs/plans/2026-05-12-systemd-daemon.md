@@ -10,7 +10,7 @@
 This plan was originally written assuming whisperx-in-process on a GPU host. We're now landing in two stages:
 
 - **v1 (this plan + Deepgram backend):** Deploy worker + web on a CPU-only LXC. Transcription via Deepgram, summarization via OpenRouter. No GPU on the runtime host. Worker becomes a pure HTTP orchestrator. Most of the GPU/VRAM discussion below is **forward-looking** for when the GPU host comes online — it does not gate v1.
-- **v2 (whisper-service plan):** When the RTX 4090 server is racked, add `podracer-whisper.service` on the GPU host and switch `transcribe_backend` from `deepgram` to `whisperx-http`. The worker LXC is unchanged.
+- **v2 (whisper-service plan):** When a GPU host is available, add `podracer-whisper.service` on the GPU host and switch `transcribe_backend` from `deepgram` to `whisperx-http`. The worker LXC is unchanged.
 
 Net effect on this plan: the dispatcher in `transcribe_episode` picks a backend per `cfg.transcribe_backend`. Everything else (jobs table, watermark, drain loop, systemd units) is identical in both deployment modes.
 
