@@ -5,7 +5,7 @@
 
 ## Objective
 
-Evaluate and implement multiple inference backends for the summarization pipeline. The production target is an RTX 4090 (24GB VRAM) running gemma4:e4b alongside WhisperX and an embedding model. Development is on an RTX 5090 (32GB).
+Evaluate and implement multiple inference backends for the summarization pipeline. The production target is a 24GB GPU running gemma4:e4b alongside WhisperX and an embedding model. Development is on a 32GB GPU.
 
 ## Status
 
@@ -39,7 +39,7 @@ Evaluate and implement multiple inference backends for the summarization pipelin
 - Schema-enforced structured output via guided decoding
 - Prefix caching across requests (transcript KV state reused across passes)
 - Continuous batching for concurrent requests (critical for podcast queue)
-- Native FP8 on RTX 5090 — near-bf16 quality at half memory
+- Native FP8 on recent GPUs — near-bf16 quality at half memory
 
 **Cons:**
 - Heavy VRAM overhead — pre-allocates aggressively for KV cache
@@ -55,7 +55,7 @@ Evaluate and implement multiple inference backends for the summarization pipelin
 **Potential role:** Middle ground between Ollama and vLLM — GGUF memory efficiency with OpenAI-compatible batched serving and grammar-constrained JSON output.
 
 **When to revisit:**
-- If we need batched serving for GGUF quants (podcast queue on 4090)
+- If we need batched serving for GGUF quants (podcast queue on a 24GB GPU)
 - If Ollama's single-request limitation becomes the bottleneck
 - The OpenAI-compatible API means our `--backend vllm` code works as-is with `--base-url`
 
@@ -99,7 +99,7 @@ vLLM can truncate responses at `max_tokens`, producing invalid JSON. Added `_rep
 
 ## VRAM Planning
 
-### RTX 5090 (32GB) — Development
+### 32GB GPU — Development
 
 | Model | Format | Weights | Max Context | Status |
 |---|---|---|---|---|
@@ -110,7 +110,7 @@ vLLM can truncate responses at `max_tokens`, producing invalid JSON. Added `_rep
 | Qwen 3.6 27B | Q4 GGUF | ~14 GB | 65K | Working (Ollama) |
 | Qwen 3.6 27B | FP8 | ~28 GB | N/A | **OOM** — weights fill VRAM, no room for KV cache |
 
-### RTX 4090 (24GB) — Production
+### 24GB GPU — Production
 
 | Component | Estimated VRAM |
 |---|---|
@@ -120,13 +120,13 @@ vLLM can truncate responses at `max_tokens`, producing invalid JSON. Added `_rep
 | KV cache (65K context) | ~10 GB |
 | **Total** | **~22 GB** |
 
-E4B at bf16 should fit on 4090 alongside WhisperX. This is the recommended production config — full model quality with enough context for transcripts.
+E4B at bf16 should fit on a 24GB GPU alongside WhisperX. This is the recommended production config — full model quality with enough context for transcripts.
 
 ## Key Takeaway
 
 27B-class models do not fit on a single 32GB GPU via vLLM at any quantization level (bf16, FP8, or AWQ INT4) with usable context for long transcripts. vLLM's runtime overhead (CUDA graphs, profiling buffers, KV pre-allocation) is designed for datacenter GPUs and consumes memory that Ollama/llama.cpp avoids with purpose-built consumer GPU kernels.
 
-**E4B on vLLM bf16 is the single-GPU production path** — it fits on both 5090 and 4090, delivers significantly better quality than Ollama Q4, and supports batched serving for the podcast queue.
+**E4B on vLLM bf16 is the single-GPU production path** — it fits on both 32GB and 24GB GPUs, delivers significantly better quality than Ollama Q4, and supports batched serving for the podcast queue.
 
 ### Multi-GPU options for 27B on vLLM
 
@@ -134,9 +134,9 @@ E4B at bf16 should fit on 4090 alongside WhisperX. This is the recommended produ
 |---|---|---|---|---|
 | 2x RTX 3090 (used) | 48 GB | ~$1,500 | FP8 yes, bf16 tight | No NVLink, PCIe tensor parallel |
 | 2x RTX 5090 FE | 64 GB | ~$4,000 | Yes | No NVLink on consumer cards |
-| 5090 + 4090 (existing) | 56 GB | Already owned | Possibly | Needs heterogeneous TP (experimental) |
+| 32GB + 24GB (mixed cards) | 56 GB | — | Possibly | Needs heterogeneous TP (experimental) |
 
-The 5090 + 4090 path via the k3s GPU tower is the most cost-effective. Standard `--tensor-parallel-size 2` requires identical GPUs, but vLLM is working on heterogeneous support. Revisit when the cluster is up.
+A mixed 32GB + 24GB pair would be the cheapest path if the cards are already on hand. Standard `--tensor-parallel-size 2` requires identical GPUs, but vLLM is working on heterogeneous support. Revisit when that support lands.
 
 **Decision gate:** Run the multi-transcript eval first (E4B bf16 vs 26B Q4 vs Qwen Q4 across 3-5 episodes). If E4B bf16 is good enough, no hardware purchase needed.
 
@@ -145,6 +145,6 @@ The 5090 + 4090 path via the k3s GPU tower is the most cost-effective. Standard 
 - [ ] **Multi-transcript eval** — determine if E4B bf16 quality justifies staying single-GPU or if 27B warrants hardware investment
 - [ ] Parallelize summarization passes 2-5 (independent after speaker ID) — vLLM batching makes this free
 - [ ] Add tokenizer-based context chunking for models with limited context (enables 26B on vLLM for agent tasks)
-- [ ] Test full stack on RTX 4090 (vLLM E4B bf16 + WhisperX + embeddings)
-- [ ] Revisit 5090 + 4090 heterogeneous tensor parallel when vLLM support matures
+- [ ] Test full stack on a 24GB GPU (vLLM E4B bf16 + WhisperX + embeddings)
+- [ ] Revisit mixed-GPU heterogeneous tensor parallel when vLLM support matures
 - [ ] Evaluate llama.cpp server if batched GGUF serving is needed for 27B models
